@@ -3,6 +3,17 @@
 ## Main Pipeline
 
 1. `clean_segment.py`
+
+Default method preprocesses respiratory data with _khodadad2018_ NeuroKit2 method, inspired by ([Khodadad et al. (2018)](https://iopscience.iop.org/article/10.1088/1361-6579/aad7e6/meta)).
+
+_khodad2018_ removes slow baseline drifts by applying a lowcut at .05Hz (preserves breathing rates higher than 3 breath per minute) and high frequency noise by applying a highcut at 3 Hz (preserves breathing rates slower than 180 breath per minute). It applies 2nd order butterworth method, the traditional and legacy implementation using "butterworth_ba".
+
+After cleaning, the signal is resampled from 2000Hz to 200Hz.
+
+The signal for each participant is then split into segments before inhalation and during inhalation, based on the timestamps provided for each participant's data.
+
+Preprocessed and split segments are stored into .mat files.
+
 2. `epochize.py` - TODO
 3. `lzc_calculation.py` - TODO
 4. `lzc_analysis.py` - TODO
