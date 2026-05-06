@@ -1,8 +1,12 @@
 # N2O Respiratory Complexity Analysis
 
+## Setup
+
+**TODO** How to install the necessary libraries and prepare the environment
+
 ## Main Pipeline
 
-1. `clean_segment.py`
+### 1. Preprocessing (`prep.py`)
 
 Default method preprocesses respiratory data with _khodadad2018_ NeuroKit2 method, inspired by ([Khodadad et al. (2018)](https://iopscience.iop.org/article/10.1088/1361-6579/aad7e6/meta)).
 
@@ -12,17 +16,17 @@ After cleaning, the signal is resampled from 2000Hz to 200Hz.
 
 The signal for each participant is then split into segments before inhalation and during inhalation, based on the timestamps provided for each participant's data.
 
-Preprocessed and split segments are stored into .mat files.
+Filtered, downsample, and segmented .mat files are stored in `data_{pipeline_method}_{fs_target}Hz`.
 
-2. `epochize.py` - TODO
-3. `lzc_calculation.py` - TODO
-4. `lzc_analysis.py` - TODO
+**TODO** - usage
 
-## Python Scripts
+### 2. Splitting into epochs (`epochize.py`) - TODO
+### 3. Calculating LZC (`lzc_calculation.py`) - TODO
+### 4. Analysing LZC values (`lzc_analysis.py`) - TODO
 
-TODO - add all the ways in which each can be used
+## Python Analysis Tools
 
-`clean_segment.py` cleans raw respiratory data, splits it into session segments, and saves 25 Hz segmented files.
+**TODO** - add all the ways in which each can be used
 
 `clean_segment_compare.py` compares the different cleaning methods across participant files and plots them side by side.
 
@@ -32,15 +36,9 @@ TODO - add all the ways in which each can be used
 
 `complexity_sensitivity_analysis.py` is a broader LZC sensitivity script for cleaned respiratory segments.
 
-`delete.py` deletes files in `data_clean_segmented` whose names contain `50Hz`.
-
-`lzc_preprocessing.py` preprocesses raw respiratory data into cleaned pre-session and session segments for LZC analysis.
-
 `plot_sampling_rate.py` compares the raw respiratory trace against one or more downsampled versions.
 
-`rename.py` renames segmented files by replacing `50.0` with `50` in filenames.
-
-`analyze_unique_values.py` inspects unique values in the workspace data or output files.
+`unique_timestamp_values.py` inspects unique values in the workspace data or output files.
 
 `sensitivity_analysis.py` is an older example LZC sensitivity script.
 
@@ -48,7 +46,7 @@ TODO - add all the ways in which each can be used
 
 `sensitivity_analysis_02.py` is another sensitivity-analysis variant with multiple binarization checks.
 
-## MATLAB Tools
+## MATLAB Analysis Tools
 
 `plot_resp_ecg.m` visualizes raw respiratory and ECG data after loading a raw file from `data_raw`.
 

@@ -16,7 +16,7 @@ def parse_args():
     )
     parser.add_argument(
         "--input-dir",
-        default="data_raw",
+        default="../data_raw",
         help="Directory containing participant .mat files",
     )
     parser.add_argument(

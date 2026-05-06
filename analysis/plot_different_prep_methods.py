@@ -8,7 +8,7 @@ import numpy as np
 from scipy.io import loadmat
 
 
-DEFAULT_METHODS = ["biosppy", "downsample", "khodadad2018", "manual_nk2"]
+DEFAULT_METHODS = ["25Hz", "khodadad2018-25Hz", "manual_nk2-25Hz", "biosppy-25Hz"]
 
 
 def parse_args():
@@ -20,14 +20,17 @@ def parse_args():
     )
     parser.add_argument(
         "--input-dir",
-        default="data_clean_segmented",
+        default="../data_clean_segmented",
         help="Directory containing files like P003-1-biosppy.mat",
     )
     parser.add_argument(
         "--methods",
         nargs="+",
         default=DEFAULT_METHODS,
-        help="Methods to compare (must match filename suffixes before .mat)",
+        help=(
+            "Methods to compare. Each entry may be a full suffix or a substring "
+            "of the filename suffix (e.g., 'khodadad2018' or 'khodadad2018-200Hz')."
+        ),
     )
     parser.add_argument(
         "--participants",
@@ -37,7 +40,7 @@ def parse_args():
     )
     parser.add_argument(
         "--output-dir",
-        default="Figures/clean_segment_compare",
+        default="../figures/clean_segment_compare",
         help="Directory to save comparison plots",
     )
     return parser.parse_args()
@@ -45,7 +48,8 @@ def parse_args():
 
 def discover_files(input_dir, methods):
     """Return mapping: prefix -> {method: filepath} for available files."""
-    patt = re.compile(r"^(P\d{3}-\d)-([A-Za-z0-9_]+)\.mat$")
+    # Accept suffixes that may include hyphens (e.g., method-rate like khodadad2018-200Hz)
+    patt = re.compile(r"^(P\d{3}-\d)-([A-Za-z0-9_-]+)\.mat$")
     grouped = defaultdict(dict)
 
     for fname in os.listdir(input_dir):
@@ -56,7 +60,8 @@ def discover_files(input_dir, methods):
             continue
 
         prefix, method = m.group(1), m.group(2)
-        if method not in methods:
+        # Allow requested methods to be provided as full suffixes or substrings
+        if not any(req == method or req in method for req in methods):
             continue
 
         grouped[prefix][method] = os.path.join(input_dir, fname)
@@ -64,53 +69,52 @@ def discover_files(input_dir, methods):
     return grouped
 
 
-def flatten_valid_segments(seg_2d, lengths):
-    """Convert NaN-padded segment matrix + lengths into one concatenated 1D signal."""
-    if seg_2d.size == 0 or lengths.size == 0:
+def flatten_valid_segments(segments):
+    """Concatenate a list of 1D segments into one 1D signal (drops NaNs)."""
+    if not segments:
         return np.empty((0,), dtype=float)
 
     chunks = []
-    n_rows = min(seg_2d.shape[0], lengths.shape[0])
-    for i in range(n_rows):
-        seg_len = int(lengths[i])
-        if seg_len <= 0:
-            continue
-        seg_len = min(seg_len, seg_2d.shape[1])
-        chunk = np.asarray(seg_2d[i, :seg_len], dtype=float)
-        chunk = chunk[np.isfinite(chunk)]
-        if chunk.size > 0:
-            chunks.append(chunk)
+    for seg in segments:
+        arr = np.asarray(seg, dtype=float)
+        arr = arr[np.isfinite(arr)]
+        if arr.size > 0:
+            chunks.append(arr)
 
-    if not chunks:
-        return np.empty((0,), dtype=float)
-    return np.concatenate(chunks)
+    return np.concatenate(chunks) if chunks else np.empty((0,), dtype=float)
 
 
 def load_method_data(path):
     mat = loadmat(path)
 
-    pre_segments = np.asarray(mat.get("pre_segments", np.empty((0, 0))), dtype=float)
-    n2o_segments = np.asarray(mat.get("n2o_segments", np.empty((0, 0))), dtype=float)
+    def _scalar(key):
+        arr = np.asarray(mat.get(key, np.array([[np.nan]]))).reshape(-1)
+        return float(arr[0]) if arr.size else np.nan
 
-    pre_lengths = np.asarray(mat.get("pre_segment_lengths", np.empty((0,))), dtype=int).reshape(-1)
-    n2o_lengths = np.asarray(mat.get("n2o_segment_lengths", np.empty((0,))), dtype=int).reshape(-1)
+    fs = _scalar("fs")
+    n2o_start_sec = _scalar("n2o_start_sec")
 
-    fs_raw = np.asarray(mat.get("fs", np.array([[np.nan]]))).reshape(-1)
-    fs = float(fs_raw[0]) if fs_raw.size else np.nan
+    def _load_segments(key):
+        raw = mat.get(key)
+        if raw is None:
+            return []
+        raw = np.asarray(raw)
+        # Expect MATLAB cell array stored as an object array; otherwise return empty
+        if raw.dtype.kind != "O":
+            return []
+        return [np.asarray(c, dtype=float).reshape(-1) for c in raw.reshape(-1)]
 
-    n2o_start_raw = np.asarray(mat.get("n2o_start_sec", np.array([[np.nan]]))).reshape(-1)
-    n2o_start_sec = float(n2o_start_raw[0]) if n2o_start_raw.size else np.nan
+    pre_segments = _load_segments("pre_segments")
+    n2o_segments = _load_segments("n2o_segments")
 
-    pre_flat = flatten_valid_segments(pre_segments, pre_lengths)
-    n2o_flat = flatten_valid_segments(n2o_segments, n2o_lengths)
+    pre_flat = flatten_valid_segments(pre_segments)
+    n2o_flat = flatten_valid_segments(n2o_segments)
 
     return {
         "fs": fs,
         "n2o_start_sec": n2o_start_sec,
         "pre_segments": pre_segments,
         "n2o_segments": n2o_segments,
-        "pre_lengths": pre_lengths,
-        "n2o_lengths": n2o_lengths,
         "pre_flat": pre_flat,
         "n2o_flat": n2o_flat,
     }
@@ -165,7 +169,7 @@ def print_general_metrics(prefix, d):
     print(f"  [{prefix}] General Overview")
     print(
         f"    fs={d['fs']:.3f} Hz | n2o_start={d['n2o_start_sec']:.3f}s | "
-        f"pre_segments={d['pre_segments'].shape[0]} | n2o_segments={d['n2o_segments'].shape[0]}"
+        f"pre_segments={len(d['pre_segments'])} | n2o_segments={len(d['n2o_segments'])}"
     )
     print(f"    PRE: samples={pre_stats['samples']}, duration={pre_dur:.2f}s")
     print(f"    N2O: samples={n2o_stats['samples']}, duration={n2o_dur:.2f}s")

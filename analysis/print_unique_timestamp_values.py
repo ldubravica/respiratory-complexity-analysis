@@ -1,10 +1,9 @@
 import os
 import glob
 
-def analyze_unique_values():
+def print_unique_values():
     """
-    Analyzes all .txt files in the N2O-Study2-BIOPAC folder and extracts
-    unique values from Type, Channel, and Label columns.
+    Extract unique values from Type, Channel, and Label columns in .txt files.
     """
     
     # Set to store unique values
@@ -12,11 +11,12 @@ def analyze_unique_values():
     unique_channels = set()
     unique_labels = set()
     
-    # Get all .txt files in the N2O-Study2-BIOPAC folder
-    folder_path = os.path.join(os.getcwd(), "N2O-Study2-BIOPAC")
+    # Get all .txt files in the data_raw folder
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    folder_path = os.path.abspath(os.path.join(script_dir, "..", "data_raw"))
     txt_files = glob.glob(os.path.join(folder_path, "*.txt"))
     
-    print(f"Found {len(txt_files)} .txt files to analyze...")
+    print(f"\nFound {len(txt_files)} .txt files to analyze...\n")
     print("=" * 50)
     
     # Process each file
@@ -49,7 +49,7 @@ def analyze_unique_values():
             print(f"Error processing {file_path}: {e}")
     
     # Print results
-    print("\nUNIQUE VALUES FOUND:")
+    print("UNIQUE VALUES FOUND:")
     print("=" * 50)
     
     print(f"\nType values ({len(unique_types)} unique):")
@@ -64,8 +64,7 @@ def analyze_unique_values():
     for label_val in sorted(unique_labels):
         print(f"  - {label_val}")
     
-    print("\n" + "=" * 50)
-    print("Analysis complete!")
+    print("\n" + "=" * 50 + "\n")
 
 if __name__ == "__main__":
-    analyze_unique_values()
+    print_unique_values()

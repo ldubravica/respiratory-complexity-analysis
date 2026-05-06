@@ -1,4 +1,5 @@
 /.conda
 /.vscode
-/Figures
+/archive
+/figures
 /data*

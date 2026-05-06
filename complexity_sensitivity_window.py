@@ -12,9 +12,9 @@ from scipy.io import loadmat
 
 DEFAULT_WINDOWS_SEC = [10, 20, 30, 45, 60, 90, 120, 150, 180, 210, 240, 270, 300]
 DEFAULT_SAMPLE_SIZE = 147  # 147 is all
-DEFAULT_INPUT_DIR = "data_clean_segmented"
-DEFAULT_PATTERN = "*-khodadad2018.mat"  # / "*-manual_nk2.mat" / "*-downsample.mat" / "*-biosppy.mat""
-DEFAULT_OUTPUT_DIR = "figures/complexity_sensitivity_window"
+DEFAULT_INPUT_DIR = "../data_khodadad2018_200Hz"
+DEFAULT_PATTERN = "*-khodadad2018-200Hz.mat"
+DEFAULT_OUTPUT_DIR = "../figures/complexity_sensitivity_window"
 DEFAULT_RANDOM_SEED = 123
 
 
