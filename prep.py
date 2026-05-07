@@ -14,8 +14,8 @@ from scipy.io import loadmat, savemat
 INPUT_DIR = "data_raw"                  # raw .mat files; line noise removed; 0.05-5 Hz bandpass
 VAR_NAME = "data"                       # variable name inside each .mat
 
-FS_ORIG = 2000.0                        # original sampling rate
-FS_TARGET = 200.0                       # target sampling rate
+FS_ORIG = 2000                          # original sampling rate
+FS_TARGET = 200                         # target sampling rate
 
 PIPELINE_METHOD = "khodadad2018"        # "manual", "khodadad2018", or "none" for no cleaning
 

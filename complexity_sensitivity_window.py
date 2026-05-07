@@ -11,18 +11,20 @@ from scipy.io import loadmat
 
 
 DEFAULT_WINDOWS_SEC = [10, 20, 30, 45, 60, 90, 120, 150, 180, 210, 240, 270, 300]
+DEFAULT_WINDOWS_SEC = [10, 20, 30]
 DEFAULT_SAMPLE_SIZE = 147  # 147 is all
-DEFAULT_INPUT_DIR = "../data_khodadad2018_200Hz"
+DEFAULT_SAMPLE_SIZE = 3  # 147 is all
+DEFAULT_INPUT_DIR = "data_khodadad2018_200Hz"
 DEFAULT_PATTERN = "*-khodadad2018-200Hz.mat"
-DEFAULT_OUTPUT_DIR = "../figures/complexity_sensitivity_window"
+DEFAULT_OUTPUT_DIR = "figures/complexity_sensitivity_window"
 DEFAULT_RANDOM_SEED = 123
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
         description=(
-            "Run a respiratory LZC sensitivity analysis over window sizes using "
-            "cleaned and downsampled khodadad2018 files."
+            "Run respiratory LZC sensitivity analysis over window sizes. "
+            "Expects .mat files output from prep.py with pre_segments, n2o_segments, and fs fields."
         )
     )
     parser.add_argument(
@@ -104,46 +106,43 @@ def pattern_to_method_label(pattern):
     return label or "unknown"
 
 
-def load_segment_matrix(mat, key_segments, key_lengths):
-    segments = np.asarray(mat.get(key_segments, np.empty((0, 0))), dtype=float)
-    lengths = np.asarray(mat.get(key_lengths, np.empty((0,))), dtype=int).reshape(-1)
-
-    if segments.size == 0:
+def load_segment_matrix(mat, key_segments):
+    """Load cell array of segments from prep.py output.
+    
+    Expected format: MATLAB cell array stored as object array,
+    where each cell contains a 1D float array.
+    """
+    cell_array = mat.get(key_segments, np.empty((0, 0), dtype=object))
+    if cell_array.size == 0:
         return []
-
-    if segments.ndim == 1:
-        segments = segments.reshape(1, -1)
-
-    if lengths.size == 0:
-        lengths = np.asarray([np.sum(np.isfinite(row)) for row in segments], dtype=int)
-
-    cleaned_segments = []
-    n_rows = min(segments.shape[0], lengths.shape[0])
-    for i in range(n_rows):
-        seg_len = int(lengths[i])
-        if seg_len <= 0:
-            continue
-        seg_len = min(seg_len, segments.shape[1])
-        seg = np.asarray(segments[i, :seg_len], dtype=float)
-        seg = seg[np.isfinite(seg)]
-        if seg.size > 0:
-            cleaned_segments.append(seg)
-
-    return cleaned_segments
+    
+    # Convert to list of 1D arrays
+    cell_array = np.asarray(cell_array, dtype=object).reshape(-1)
+    segments = []
+    for cell in cell_array:
+        segment = np.asarray(cell, dtype=float).reshape(-1)
+        segment = segment[np.isfinite(segment)]  # Remove NaN values
+        if segment.size > 0:
+            segments.append(segment)
+    
+    return segments
 
 
 def load_clean_segmented_file(path):
+    """Load preprocessed respiratory data from prep.py output."""
     mat = loadmat(path)
 
+    # Extract sampling rate (required)
     fs_raw = np.asarray(mat.get("fs", np.array([[np.nan]])), dtype=float).reshape(-1)
     fs = float(fs_raw[0]) if fs_raw.size else np.nan
     if not np.isfinite(fs) or fs <= 0:
-        fs = 25.0
+        raise ValueError(f"Invalid or missing sampling rate in {path}")
 
-    pre_segments = load_segment_matrix(mat, "pre_segments", "pre_segment_lengths")
-    n2o_segments = load_segment_matrix(mat, "n2o_segments", "n2o_segment_lengths")
+    # Load pre-inhalation and N2O inhalation segments
+    pre_segments = load_segment_matrix(mat, "pre_segments")
+    n2o_segments = load_segment_matrix(mat, "n2o_segments")
 
-    # Use all available cleaned respiratory segments for the file.
+    # Combine all cleaned respiratory segments
     segments = pre_segments + n2o_segments
 
     return {
