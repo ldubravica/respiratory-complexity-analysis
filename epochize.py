@@ -9,7 +9,6 @@ from scipy.io import loadmat, savemat
 # Configuration
 # ---------------------------
 
-
 DEFAULT_INPUT_DIR = "data_khodadad2018_200Hz"
 DEFAULT_EPOCH_LENGTH_SEC = 120.0
 DEFAULT_INPUT_PATTERN = ""
@@ -24,11 +23,9 @@ def parse_args():
     parser.add_argument("--input-pattern", default=DEFAULT_INPUT_PATTERN, help="Input file names' pattern to match (e.g., 'khodadad2018-200Hz')")
     return parser.parse_args()
 
-
 # ---------------------------
 # Phases & Tools
 # ---------------------------
-
 
 def cell_array_to_list(cell_array):
     """Unpack a MATLAB cell array (object array) back into a list of 1D segments."""
@@ -61,11 +58,9 @@ def epochize_segments(segments, epoch_length_samples):
 
     return np.stack(epochs, axis=0)
 
-
 # ---------------------------
 # Main loop
 # ---------------------------
-
 
 def main():
     args = parse_args()

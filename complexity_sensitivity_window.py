@@ -10,14 +10,20 @@ import pandas as pd
 from scipy.io import loadmat
 
 
+# ---------------------------
+# Configuration
+# ---------------------------
+
 DEFAULT_WINDOWS_SEC = [10, 20, 30, 45, 60, 90, 120, 150, 180, 210, 240, 270, 300]
 DEFAULT_WINDOWS_SEC = [10, 20, 30]
 DEFAULT_SAMPLE_SIZE = 147  # 147 is all
 DEFAULT_SAMPLE_SIZE = 3  # 147 is all
 DEFAULT_INPUT_DIR = "data_khodadad2018_200Hz"
-DEFAULT_PATTERN = "*-khodadad2018-200Hz.mat"
+DEFAULT_PATTERN = "*.mat"
 DEFAULT_OUTPUT_DIR = "figures/complexity_sensitivity_window"
-DEFAULT_RANDOM_SEED = 123
+DEFAULT_RANDOM_SEED = 42
+DEFAULT_WINDOWS_PER_SEGMENT = 5
+DEFAULT_FS = 200.0
 
 
 def parse_args():
@@ -28,63 +34,46 @@ def parse_args():
         )
     )
     parser.add_argument(
-        "--input-dir",
-        default=DEFAULT_INPUT_DIR,
+        "--input-dir", default=DEFAULT_INPUT_DIR,
         help="Directory containing cleaned and segmented .mat files",
     )
     parser.add_argument(
-        "--pattern",
-        default=DEFAULT_PATTERN,
-        help="Glob pattern for input files inside the input directory",
+        "--pattern", default=DEFAULT_PATTERN,
+        help="Pattern to match .mat files",
     )
     parser.add_argument(
-        "--sample-size",
-        type=int,
-        default=DEFAULT_SAMPLE_SIZE,
+        "--fs", type=int, default=DEFAULT_FS,
+        help="Sampling rate of the data",
+    )
+    parser.add_argument(
+        "--sample-size", type=int, default=DEFAULT_SAMPLE_SIZE,
         help="Number of participant files to analyze",
     )
     parser.add_argument(
-        "--random-sample",
-        action="store_true",
-        help="Randomly sample files instead of taking the first N sorted files",
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=DEFAULT_RANDOM_SEED,
-        help="Random seed used when sampling files and windows",
-    )
-    parser.add_argument(
-        "--windows",
-        type=float,
-        nargs="+",
-        default=DEFAULT_WINDOWS_SEC,
+        "--windows", type=float, nargs="+", default=DEFAULT_WINDOWS_SEC,
         help="Window sizes in seconds to test (example: --windows 10 20 30 60)",
     )
     parser.add_argument(
-        "--windows-per-segment",
-        type=int,
-        default=4,
+        "--windows-per-segment", type=int, default=DEFAULT_WINDOWS_PER_SEGMENT,
         help="Number of random windows to draw from each eligible segment per window size",
     )
     parser.add_argument(
-        "--stability-threshold",
-        type=float,
-        default=0.02,
+        "--stability-threshold", type=float, default=0.02,
         help="Relative change threshold used to identify stabilization",
     )
     parser.add_argument(
-        "--output-dir",
-        default=DEFAULT_OUTPUT_DIR,
+        "--output-dir", default=DEFAULT_OUTPUT_DIR,
         help="Directory to save figures and CSV summaries",
     )
     parser.add_argument(
-        "--save-path",
-        default=None,
-        help="Optional explicit figure path. If omitted, the figure is only shown.",
+        "--skip-saving-figure", action="store_false",
+        help="Flag to not save the generated figures after showing them",
     )
     return parser.parse_args()
 
+# ---------------------------
+# Phases & Tools
+# ---------------------------
 
 def discover_files(input_dir, pattern):
     search_pattern = os.path.join(input_dir, pattern)
@@ -92,179 +81,26 @@ def discover_files(input_dir, pattern):
     return files
 
 
-def pattern_to_method_label(pattern):
-    base = os.path.basename(pattern)
-    if base.startswith("*-") and base.endswith(".mat"):
-        base = base[2:-4]
-    elif base.endswith(".mat"):
-        base = base[:-4]
-    base = base.replace("*", "all")
-    safe = []
-    for char in base:
-        safe.append(char if char.isalnum() or char in ("-", "_") else "_")
-    label = "".join(safe).strip("_")
-    return label or "unknown"
-
-
-def load_segment_matrix(mat, key_segments):
-    """Load cell array of segments from prep.py output.
-    
-    Expected format: MATLAB cell array stored as object array,
-    where each cell contains a 1D float array.
-    """
-    cell_array = mat.get(key_segments, np.empty((0, 0), dtype=object))
-    if cell_array.size == 0:
-        return []
-    
-    # Convert to list of 1D arrays
+def cell_array_to_list(cell_array):
+    """Unpack a MATLAB cell array (object array) back into a list of 1D segments."""
     cell_array = np.asarray(cell_array, dtype=object).reshape(-1)
     segments = []
     for cell in cell_array:
         segment = np.asarray(cell, dtype=float).reshape(-1)
-        segment = segment[np.isfinite(segment)]  # Remove NaN values
-        if segment.size > 0:
-            segments.append(segment)
-    
+        segments.append(segment)
     return segments
 
 
-def load_clean_segmented_file(path):
-    """Load preprocessed respiratory data from prep.py output."""
-    mat = loadmat(path)
-
-    # Extract sampling rate (required)
-    fs_raw = np.asarray(mat.get("fs", np.array([[np.nan]])), dtype=float).reshape(-1)
-    fs = float(fs_raw[0]) if fs_raw.size else np.nan
-    if not np.isfinite(fs) or fs <= 0:
-        raise ValueError(f"Invalid or missing sampling rate in {path}")
-
-    # Load pre-inhalation and N2O inhalation segments
-    pre_segments = load_segment_matrix(mat, "pre_segments")
-    n2o_segments = load_segment_matrix(mat, "n2o_segments")
-
-    # Combine all cleaned respiratory segments
-    segments = pre_segments + n2o_segments
-
-    return {
-        "fs": fs,
-        "segments": segments,
-        "pre_count": len(pre_segments),
-        "n2o_count": len(n2o_segments),
-    }
-
-
-def normalized_lzc(binary_signal):
-    binary_signal = np.asarray(binary_signal, dtype=bool)
-    n = binary_signal.size
-    if n < 2:
-        return np.nan
-    return float(ant.lziv_complexity(binary_signal, normalize=True))
-
-
-def sample_window_metrics(segment, n_points, n_windows_per_segment, rng):
-    if n_points < 2 or n_windows_per_segment <= 0:
-        return []
-    if segment.size < (n_windows_per_segment * n_points):
-        return []
-
-    # Draw a random non-overlapping tiling of windows by selecting one offset,
-    # then placing fixed-size windows back-to-back.
-    max_offset = segment.size - (n_windows_per_segment * n_points)
-    offset = rng.randint(0, max_offset) if max_offset > 0 else 0
-    starts = [offset + (k * n_points) for k in range(n_windows_per_segment)]
-
-    values = []
-    for start in starts:
-        window = segment[start : start + n_points]
-        binary = window > np.median(window)
-        lzc = normalized_lzc(binary)
-        if np.isfinite(lzc):
-            values.append(
-                {
-                    "lzc": lzc,
-                    "binary_balance": float(np.mean(binary)),
-                }
-            )
-
-    return values
-
-
-def file_level_window_summary(file_data, windows_sec, n_windows_per_segment, rng):
-    fs = file_data["fs"]
-    segments = file_data["segments"]
-    if not windows_sec:
-        return pd.DataFrame()
-
-    largest_window_sec = float(max(windows_sec))
-    largest_n_points = int(round(largest_window_sec * fs))
-    min_required_len = n_windows_per_segment * largest_n_points
-
-    # Keep only segments that can support the requested number of windows
-    # at the largest tested window size. This guarantees equal sample counts
-    # across all tested window sizes.
-    valid_segments = [seg for seg in segments if seg.size >= min_required_len]
-
-    rows = []
-    for window_sec in windows_sec:
-        n_points = int(round(window_sec * fs))
-        if n_points < 2:
-            continue
-
-        lzc_values = []
-        balance_values = []
-        segments_used = 0
-
-        for seg in valid_segments:
-            metrics = sample_window_metrics(seg, n_points, n_windows_per_segment, rng)
-            if metrics:
-                segments_used += 1
-            for item in metrics:
-                lzc_values.append(item["lzc"])
-                balance_values.append(item["binary_balance"])
-
-        if lzc_values:
-            lzc_values = np.asarray(lzc_values, dtype=float)
-            balance_values = np.asarray(balance_values, dtype=float)
-            rows.append(
-                {
-                    "Window_Sec": float(window_sec),
-                    "LZC_Mean": float(np.mean(lzc_values)),
-                    "LZC_Std": float(np.std(lzc_values)),
-                    "LZC_CV": float(np.std(lzc_values) / np.mean(lzc_values)) if np.mean(lzc_values) > 0 else np.nan,
-                    "Binary_Balance_Mean": float(np.mean(balance_values)),
-                    "Binary_Balance_Std": float(np.std(balance_values)),
-                    "N_Samples": int(lzc_values.size),
-                    "N_Segments_Used": int(segments_used),
-                }
-            )
-        else:
-            rows.append(
-                {
-                    "Window_Sec": float(window_sec),
-                    "LZC_Mean": np.nan,
-                    "LZC_Std": np.nan,
-                    "LZC_CV": np.nan,
-                    "Binary_Balance_Mean": np.nan,
-                    "Binary_Balance_Std": np.nan,
-                    "N_Samples": 0,
-                    "N_Segments_Used": int(segments_used),
-                }
-            )
-
-    return pd.DataFrame(rows)
-
-
-def aggregate_across_files(file_summaries):
+def group_by_window_size(results):
     summary = (
-        file_summaries.groupby("Window_Sec")
+        results.groupby("Window_Sec")
         .agg(
+            N_Segments=("Name", "nunique"),
             LZC_Mean_Mean=("LZC_Mean", "mean"),
             LZC_Mean_Std=("LZC_Mean", "std"),
-            LZC_Median=("LZC_Mean", "median"),
+            LZC_Mean_Median=("LZC_Mean", "median"),
             Binary_Balance_Mean=("Binary_Balance_Mean", "mean"),
             Binary_Balance_Std=("Binary_Balance_Mean", "std"),
-            N_Files=("File", "nunique"),
-            Mean_Samples=("N_Samples", "mean"),
         )
         .reset_index()
         .sort_values("Window_Sec")
@@ -273,25 +109,22 @@ def aggregate_across_files(file_summaries):
     summary["LZC_Abs_Delta"] = summary["LZC_Mean_Mean"].diff().abs()
     summary["LZC_Rel_Change"] = summary["LZC_Abs_Delta"] / summary["LZC_Mean_Mean"].shift(1).abs()
     summary["Binary_Balance_Delta_From_0.5"] = (summary["Binary_Balance_Mean"] - 0.5).abs()
+
     return summary
 
 
 def estimate_stabilization_window(summary, threshold):
-    if summary.empty or "LZC_Rel_Change" not in summary:
-        return None
-
     rel_change = summary["LZC_Rel_Change"].to_numpy(dtype=float)
     windows = summary["Window_Sec"].to_numpy(dtype=float)
 
+    # Find 1st window size where the relative change is below the threshold.
+    # If next value exists, check if it's below the threshold to reduce false positives.
     for idx in range(1, len(windows)):
         current = rel_change[idx]
-        if not np.isfinite(current):
-            continue
         if current < threshold:
-            # Require the next one as well if possible.
             if idx + 1 < len(windows):
                 next_val = rel_change[idx + 1]
-                if np.isfinite(next_val) and next_val < threshold:
+                if next_val < threshold:
                     return float(windows[idx])
             else:
                 return float(windows[idx])
@@ -299,9 +132,159 @@ def estimate_stabilization_window(summary, threshold):
     return None
 
 
-def point_transition_colors(aggregated, threshold):
+def process_segment(segment, window_sizes_sec, n_windows_per_segment, fs, rng):
+    max_window_points = int(round(float(max(window_sizes_sec)) * fs))
+    min_required_len = n_windows_per_segment * max_window_points
+
+    if len(segment) < min_required_len:  # maybe segment.size?
+        return pd.DataFrame()
+
+    segment_windows_info = []
+    for window_sec in window_sizes_sec:  # maybe add track progress tqdm?
+        n_window_samples = int(round(window_sec * fs))
+        lzc_values = []
+        balance_values = []
+
+        # Draw a random non-overlapping tiling of windows by selecting one offset,
+        # then placing fixed-size windows back-to-back.
+        max_offset = len(segment) - (n_windows_per_segment * n_window_samples)
+        offset = rng.randint(0, max_offset) if max_offset > 0 else 0
+        starts = [offset + (k * n_window_samples) for k in range(n_windows_per_segment)]
+
+        for start in starts:
+            window = segment[start : start + n_window_samples]
+            binary = window > np.median(window).item()
+            lzc = ant.lziv_complexity(binary, normalize=True)
+            lzc_values.append(lzc)
+            balance_values.append(float(np.mean(binary)))
+
+        lzc_values = np.asarray(lzc_values, dtype=float)
+        balance_values = np.asarray(balance_values, dtype=float)
+        segment_windows_info.append({
+            "Window_Sec": float(window_sec),
+            "LZC_Mean": float(np.mean(lzc_values)),
+            "LZC_Std": float(np.std(lzc_values)),
+            "LZC_CV": float(np.std(lzc_values) / np.mean(lzc_values)) if np.mean(lzc_values) > 0 else np.nan,
+            "Binary_Balance_Mean": float(np.mean(balance_values)),
+            "Binary_Balance_Std": float(np.std(balance_values))
+        })
+
+    return pd.DataFrame(segment_windows_info)
+
+# ---------------------------
+# Summaries & Plots
+# ---------------------------
+
+def print_summary_overview(segments_pd, segments_windows_pd, stabilization_window, threshold):
+    print("\n" + "=" * 72)
+    print("LZC COMPLEXITY WINDOW SENSITIVITY")
+    print("=" * 72)
+    print(f"Segments analyzed: {segments_pd['Name'].nunique()}")
+    print(f"Window sizes tested: {', '.join(str(int(w)) for w in segments_windows_pd['Window_Sec'])}")
+    print(f"Stability threshold: {threshold:.3f} relative change")
+
+    print("\nPer-window summary across sampled segments:")
+    for _, row in segments_windows_pd.iterrows():
+        rel_change = row["LZC_Rel_Change"]
+        rel_change_str = f"{rel_change:.4f}" if np.isfinite(rel_change) else "-.----"
+        print(
+            f"  Window {row['Window_Sec']:.0f}s | "
+            f"LZC={row['LZC_Mean_Mean']:.4f} ± {row['LZC_Mean_Std']:.4f} | "
+            f"CV={row['LZC_Mean_Std'] / row['LZC_Mean_Mean'] if row['LZC_Mean_Mean'] > 0 else np.nan:.4f} | "
+            f"rel_change={rel_change_str} | "
+            f"binary_balance={row['Binary_Balance_Mean']:.4f} | segments={int(row['N_Segments'])}"
+        )
+
+    if stabilization_window is not None:
+        print(f"\nEstimated stabilization window: ~{stabilization_window:.0f} seconds")
+    else:
+        print("\nNo clear stabilization window found under the current heuristic.")
+
+    print("=" * 72 + "\n")
+
+
+def plot_results(segments_pd, segments_windows_pd, stabilization_window, threshold, save_path):
+    fig, axes = plt.subplots(3, 1, figsize=(18, 14), sharex=True)
+
+    # Top: individual file curves + mean curve
+    ax1 = axes[0]
+    for segment_name, grp in segments_pd.groupby("Name"):
+        ax1.plot(
+            grp["Window_Sec"],
+            grp["LZC_Mean"],
+            color="0.75",
+            linewidth=1.0,
+            alpha=0.7,
+        )
+
+    ax1.errorbar(
+        segments_windows_pd["Window_Sec"],
+        segments_windows_pd["LZC_Mean_Mean"],
+        yerr=segments_windows_pd["LZC_Mean_Std"],
+        marker="o",
+        capsize=4,
+        linewidth=2.0,
+        color="#1f77b4",
+        label="Mean across sampled files",
+    )
+    if stabilization_window is not None:
+        ax1.axvline(stabilization_window, color="red", linestyle="--", label=f"Stabilization ~{stabilization_window:.0f}s")
+    ax1.set_ylabel("Normalized LZC")
+    ax1.set_title("Respiratory LZC Stability Across Window Sizes")
+    ax1.grid(alpha=0.25)
+    ax1.legend(loc="best")
+
+    # Middle: relative change between adjacent window sizes
+    ax2 = axes[1]
+    ax2.plot(
+        segments_windows_pd["Window_Sec"],
+        segments_windows_pd["LZC_Rel_Change"],
+        marker="o",
+        color="#ff7f0e",
+        linewidth=2.0,
+        label="Relative change from previous window",
+    )
+    ax2.axhline(0.0, color="black", linewidth=1.0, alpha=0.4)
+    ax2.axhline(float(threshold), color="red", linestyle="--", linewidth=1.0, alpha=0.7, label=f"{threshold:.0%} threshold")
+    if stabilization_window is not None:
+        ax2.axvline(stabilization_window, color="red", linestyle="--")
+    ax2.set_ylabel("Relative Change")
+    ax2.set_title("Where the Curve Stops Changing")
+    ax2.grid(alpha=0.25)
+    ax2.legend(loc="best")
+
+    # Bottom: binary balance diagnostic
+    ax3 = axes[2]
+    ax3.errorbar(
+        segments_windows_pd["Window_Sec"],
+        segments_windows_pd["Binary_Balance_Mean"],
+        yerr=segments_windows_pd["Binary_Balance_Std"],
+        marker="o",
+        capsize=4,
+        linewidth=2.0,
+        color="#2ca02c",
+        label="Binary balance (mean of thresholded window)",
+    )
+    ax3.axhline(0.5, color="red", linestyle="--", linewidth=1.0, label="Ideal balance = 0.5")
+    if stabilization_window is not None:
+        ax3.axvline(stabilization_window, color="red", linestyle="--")
+    ax3.set_xlabel("Window Length [s]")
+    ax3.set_ylabel("Binary Balance")
+    ax3.set_title("Binarization Quality Check")
+    ax3.grid(alpha=0.25)
+    ax3.legend(loc="best")
+
+    fig.tight_layout()
+
+    save_path = save_path + ".png"
+    fig.savefig(save_path, dpi=180)
+    print(f"Saved figure: {save_path}")
+    plt.show()
+
+
+def point_transition_colors(segments_windows_pd, threshold):
     colors = []
-    lzc_values = aggregated["LZC_Mean_Mean"].to_numpy(dtype=float)
+    lzc_values = segments_windows_pd["LZC_Mean_Mean"].to_numpy(dtype=float)
 
     for idx, value in enumerate(lzc_values):
         if idx == 0 or not np.isfinite(value):
@@ -319,12 +302,12 @@ def point_transition_colors(aggregated, threshold):
     return colors
 
 
-def plot_primary_lzc_figure(aggregated, stabilization_window, threshold, output_dir, save_path=None):
+def plot_primary_lzc_figure(segments_windows_pd, stabilization_window, threshold, save_path):
     fig, ax = plt.subplots(figsize=(20, 6))
 
-    x = aggregated["Window_Sec"].to_numpy(dtype=float)
-    y = aggregated["LZC_Mean_Mean"].to_numpy(dtype=float)
-    colors = point_transition_colors(aggregated, threshold)
+    x = segments_windows_pd["Window_Sec"].to_numpy(dtype=float)
+    y = segments_windows_pd["LZC_Mean_Mean"].to_numpy(dtype=float)
+    colors = point_transition_colors(segments_windows_pd, threshold)
 
     ax.plot(x, y, color="#1f77b4", linewidth=2.2, label="Normalized LZC")
     ax.scatter(x, y, c=colors, s=55, zorder=3, edgecolors="white", linewidths=0.6)
@@ -349,138 +332,21 @@ def plot_primary_lzc_figure(aggregated, stabilization_window, threshold, output_
     ax.legend(handles=legend_items, loc="best")
     fig.tight_layout()
 
-    os.makedirs(output_dir, exist_ok=True)
-    if save_path is None:
-        save_path = os.path.join(output_dir, "complexity_window_primary_lzc.png")
+    save_path = save_path + "_primary_lzc.png"
     fig.savefig(save_path, dpi=180)
     print(f"Saved figure: {save_path}")
     plt.show()
     plt.close(fig)
 
-
-def print_summary_overview(file_summaries, aggregated, stabilization_window, threshold):
-    print("\n" + "=" * 72)
-    print("LZC COMPLEXITY WINDOW SENSITIVITY")
-    print("=" * 72)
-    print(f"Files analyzed: {file_summaries['File'].nunique()}")
-    print(f"Window sizes tested: {', '.join(str(int(w)) if float(w).is_integer() else str(w) for w in aggregated['Window_Sec'])}")
-    print(f"Stability threshold: {threshold:.3f} relative change")
-
-    print("\nPer-window summary across sampled files:")
-    for _, row in aggregated.iterrows():
-        rel_change = row["LZC_Rel_Change"]
-        rel_change_str = "nan" if not np.isfinite(rel_change) else f"{rel_change:.4f}"
-        print(
-            f"  Window {row['Window_Sec']:.0f}s | "
-            f"LZC={row['LZC_Mean_Mean']:.4f} ± {row['LZC_Mean_Std']:.4f} | "
-            f"CV={row['LZC_Mean_Std'] / row['LZC_Mean_Mean'] if row['LZC_Mean_Mean'] > 0 else np.nan:.4f} | "
-            f"rel_change={rel_change_str} | "
-            f"binary_balance={row['Binary_Balance_Mean']:.4f} | files={int(row['N_Files'])}"
-        )
-
-    if stabilization_window is not None:
-        print(f"\nEstimated stabilization window: ~{stabilization_window:.0f} seconds")
-    else:
-        print("\nNo clear stabilization window found under the current heuristic.")
-
-    print("=" * 72)
-
-
-def plot_results(file_summaries, aggregated, stabilization_window, threshold, output_dir, output_stem, save_path=None):
-    fig, axes = plt.subplots(3, 1, figsize=(18, 14), sharex=True)
-
-    # Top: individual file curves + mean curve
-    ax1 = axes[0]
-    for file_name, grp in file_summaries.groupby("File"):
-        ax1.plot(
-            grp["Window_Sec"],
-            grp["LZC_Mean"],
-            color="0.75",
-            linewidth=1.0,
-            alpha=0.7,
-        )
-
-    ax1.errorbar(
-        aggregated["Window_Sec"],
-        aggregated["LZC_Mean_Mean"],
-        yerr=aggregated["LZC_Mean_Std"],
-        marker="o",
-        capsize=4,
-        linewidth=2.0,
-        color="#1f77b4",
-        label="Mean across sampled files",
-    )
-    if stabilization_window is not None:
-        ax1.axvline(stabilization_window, color="red", linestyle="--", label=f"Stabilization ~{stabilization_window:.0f}s")
-    ax1.set_ylabel("Normalized LZC")
-    ax1.set_title("Respiratory LZC Stability Across Window Sizes")
-    ax1.grid(alpha=0.25)
-    ax1.legend(loc="best")
-
-    # Middle: relative change between adjacent window sizes
-    ax2 = axes[1]
-    ax2.plot(
-        aggregated["Window_Sec"],
-        aggregated["LZC_Rel_Change"],
-        marker="o",
-        color="#ff7f0e",
-        linewidth=2.0,
-        label="Relative change from previous window",
-    )
-    ax2.axhline(0.0, color="black", linewidth=1.0, alpha=0.4)
-    ax2.axhline(0.02, color="red", linestyle="--", linewidth=1.0, alpha=0.7, label="2% threshold")
-    if stabilization_window is not None:
-        ax2.axvline(stabilization_window, color="red", linestyle="--")
-    ax2.set_ylabel("Relative Change")
-    ax2.set_title("Where the Curve Stops Changing")
-    ax2.grid(alpha=0.25)
-    ax2.legend(loc="best")
-
-    # Bottom: binary balance diagnostic
-    ax3 = axes[2]
-    ax3.errorbar(
-        aggregated["Window_Sec"],
-        aggregated["Binary_Balance_Mean"],
-        yerr=aggregated["Binary_Balance_Std"],
-        marker="o",
-        capsize=4,
-        linewidth=2.0,
-        color="#2ca02c",
-        label="Binary balance (mean of thresholded window)",
-    )
-    ax3.axhline(0.5, color="red", linestyle="--", linewidth=1.0, label="Ideal balance = 0.5")
-    if stabilization_window is not None:
-        ax3.axvline(stabilization_window, color="red", linestyle="--")
-    ax3.set_xlabel("Window Length [s]")
-    ax3.set_ylabel("Binary Balance")
-    ax3.set_title("Binarization Quality Check")
-    ax3.grid(alpha=0.25)
-    ax3.legend(loc="best")
-
-    fig.tight_layout()
-
-    os.makedirs(output_dir, exist_ok=True)
-    if save_path is None:
-        save_path = os.path.join(output_dir, f"{output_stem}.png")
-    fig.savefig(save_path, dpi=180)
-    print(f"Saved figure: {save_path}")
-    plt.show()
-
-    base, ext = os.path.splitext(save_path)
-    primary_save_path = f"{base}_primary{ext or '.png'}"
-    plot_primary_lzc_figure(
-        aggregated=aggregated,
-        stabilization_window=stabilization_window,
-        threshold=threshold,
-        output_dir=output_dir,
-        save_path=primary_save_path,
-    )
-
+# ---------------------------
+# Main loop
+# ---------------------------
 
 def main():
     args = parse_args()
-    rng = random.Random(args.seed)
-    np.random.seed(args.seed)
+    rng = random.Random(DEFAULT_RANDOM_SEED)
+
+    # OBTAIN NECESSARY SEGMENTS
 
     files = discover_files(args.input_dir, args.pattern)
     if not files:
@@ -491,71 +357,69 @@ def main():
     if args.sample_size <= 0:
         raise ValueError("--sample-size must be a positive integer")
 
-    if args.sample_size < len(files):
-        if args.random_sample:
-            files = rng.sample(files, args.sample_size)
-            files = sorted(files)
-        else:
-            files = files[: args.sample_size]
-    else:
-        files = sorted(files)
+    rng.shuffle(files)
+    pre_segments = {}
+    n2o_segments = {}
 
-    print(f"Found {len(files)} file(s) to analyze.")
-    print("Selected files:")
     for path in files:
+        name = os.path.splitext(os.path.basename(path))[0]
+        mat_data = loadmat(path)
+        file_pre_segments = cell_array_to_list(mat_data.get("pre_segments", np.empty((0, 0), dtype=object)))
+        file_n2o_segments = cell_array_to_list(mat_data.get("n2o_segments", np.empty((0, 0), dtype=object)))
+
+        if len(pre_segments) < args.sample_size:
+            for idx, pre_seg in enumerate(file_pre_segments):
+                if len(pre_seg) >= max(args.windows) * args.fs * args.windows_per_segment:
+                    pre_segments[name + f"_{idx}"] = pre_seg
+
+        if len(n2o_segments) < args.sample_size:
+            for idx, n2o_seg in enumerate(file_n2o_segments):
+                if len(n2o_seg) >= max(args.windows) * args.fs * args.windows_per_segment:
+                    n2o_segments[name + f"_{idx}"] = n2o_seg
+
+        if len(pre_segments) >= args.sample_size and len(n2o_segments) >= args.sample_size:
+            break
+
+    print(f"\nFound {len(pre_segments)} pre-segments to analyze:")
+    for path in set(list(pre_segments.keys())):
+        print(f"  - {os.path.basename(path)}")
+    
+    print(f"\nFound {len(n2o_segments)} n2o-segments to analyze:")
+    for path in set(list(n2o_segments.keys())):
         print(f"  - {os.path.basename(path)}")
 
-    file_rows = []
-    for path in files:
-        file_name = os.path.basename(path)
-        print(f"\nProcessing {file_name}...")
-        file_data = load_clean_segmented_file(path)
-        print(
-            f"  fs={file_data['fs']:.3f} Hz | pre_segments={file_data['pre_count']} | "
-            f"n2o_segments={file_data['n2o_count']} | total_segments={len(file_data['segments'])}"
-        )
+    segments = {**pre_segments, **n2o_segments}
 
-        if not file_data["segments"]:
-            print("  Skipping: no usable segments found.")
-            continue
+    # PROCESS EACH SEGMENT
 
-        file_summary = file_level_window_summary(
-            file_data=file_data,
-            windows_sec=args.windows,
-            n_windows_per_segment=args.windows_per_segment,
-            rng=rng,
-        )
-        if file_summary.empty:
-            print("  No valid windows could be sampled for this file.")
-            continue
+    segments_windows_info = []
+    for segment_name, segment_data in segments.items():
+        print(f"\nProcessing {segment_name}...")
+        segment_info = process_segment(segment_data, args.windows, args.windows_per_segment, args.fs, rng)
+        segment_info.insert(0, "Name", segment_name)
+        segments_windows_info.append(segment_info)
 
-        file_summary.insert(0, "File", file_name)
-        file_rows.append(file_summary)
+    # SUMMARIZE & PLOT RESULTS
 
-    if not file_rows:
-        raise RuntimeError("No valid data were found for the requested file sample.")
+    segments_pd = pd.concat(segments_windows_info, ignore_index=True)
+    # Aggregate results by window size across all segments
+    segments_windows_pd = group_by_window_size(segments_pd)
+    # Estimate stabilization window based on relative change heuristic
+    stabilization_window = estimate_stabilization_window(segments_windows_pd, args.stability_threshold)
 
-    file_summaries = pd.concat(file_rows, ignore_index=True)
-    aggregated = aggregate_across_files(file_summaries)
-    stabilization_window = estimate_stabilization_window(aggregated, args.stability_threshold)
-    method_label = pattern_to_method_label(args.pattern)
-    output_stem = f"complexity_window_sensitivity_{method_label}_n{len(files)}"
+    method_name = args.input_dir[5:]  # to remove "data_" prefix
+    output_stem = f"lzc_window_{method_name}_n{len(segments)}"
+    save_path = os.path.join(args.output_dir, output_stem)
 
     os.makedirs(args.output_dir, exist_ok=True)
-    csv_path = os.path.join(args.output_dir, f"{output_stem}_summary.csv")
-    file_summaries.to_csv(csv_path, index=False)
+    csv_path = save_path + "_summary.csv"
+    segments_windows_pd.to_csv(csv_path, index=False)
     print(f"Saved summary CSV: {csv_path}")
 
-    print_summary_overview(file_summaries, aggregated, stabilization_window, args.stability_threshold)
-    plot_results(
-        file_summaries,
-        aggregated,
-        stabilization_window,
-        args.stability_threshold,
-        args.output_dir,
-        output_stem,
-        args.save_path,
-    )
+    print_summary_overview(segments_pd, segments_windows_pd, stabilization_window, args.stability_threshold)
+    plot_results(segments_pd, segments_windows_pd, stabilization_window, args.stability_threshold, save_path)
+    plot_primary_lzc_figure(segments_windows_pd, stabilization_window, args.stability_threshold, save_path)
+    print("\n")
 
 
 if __name__ == "__main__":
