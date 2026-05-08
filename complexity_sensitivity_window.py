@@ -14,10 +14,10 @@ from scipy.io import loadmat
 # Configuration
 # ---------------------------
 
-DEFAULT_WINDOWS_SEC = [10, 20, 30, 45, 60, 90, 120, 150, 180, 210, 240, 270, 300]
-DEFAULT_WINDOWS_SEC = [10, 20, 30]
-DEFAULT_SAMPLE_SIZE = 147  # 147 is all
-DEFAULT_SAMPLE_SIZE = 3  # 147 is all
+DEFAULT_WINDOWS_SEC = [20, 40, 60, 80, 100, 120, 140, 160, 180, 200, 220, 240, 260, 280, 300]
+# DEFAULT_WINDOWS_SEC = [10, 20, 30]
+DEFAULT_SAMPLE_SIZE = 147000  # 147 is all
+# DEFAULT_SAMPLE_SIZE = 3
 DEFAULT_INPUT_DIR = "data_khodadad2018_200Hz"
 DEFAULT_PATTERN = "*.mat"
 DEFAULT_OUTPUT_DIR = "figures/complexity_sensitivity_window"
@@ -225,10 +225,10 @@ def plot_results(segments_pd, segments_windows_pd, stabilization_window, thresho
         capsize=4,
         linewidth=2.0,
         color="#1f77b4",
-        label="Mean across sampled files",
+        label="Mean across sampled segments",
     )
     if stabilization_window is not None:
-        ax1.axvline(stabilization_window, color="red", linestyle="--", label=f"Stabilization ~{stabilization_window:.0f}s")
+        ax1.axvline(stabilization_window, color="red", linestyle="--", label=f"Stabilization (<= {threshold:.0%}) ~{stabilization_window:.0f}s")
     ax1.set_ylabel("Normalized LZC")
     ax1.set_title("Respiratory LZC Stability Across Window Sizes")
     ax1.grid(alpha=0.25)
@@ -249,7 +249,7 @@ def plot_results(segments_pd, segments_windows_pd, stabilization_window, thresho
     if stabilization_window is not None:
         ax2.axvline(stabilization_window, color="red", linestyle="--")
     ax2.set_ylabel("Relative Change")
-    ax2.set_title("Where the Curve Stops Changing")
+    ax2.set_title("Relative Change in LZC Across Window Sizes")
     ax2.grid(alpha=0.25)
     ax2.legend(loc="best")
 
@@ -263,7 +263,7 @@ def plot_results(segments_pd, segments_windows_pd, stabilization_window, thresho
         capsize=4,
         linewidth=2.0,
         color="#2ca02c",
-        label="Binary balance (mean of thresholded window)",
+        label="Mean binary balance across sampled segments",
     )
     ax3.axhline(0.5, color="red", linestyle="--", linewidth=1.0, label="Ideal balance = 0.5")
     if stabilization_window is not None:
@@ -287,12 +287,12 @@ def point_transition_colors(segments_windows_pd, threshold):
     lzc_values = segments_windows_pd["LZC_Mean_Mean"].to_numpy(dtype=float)
 
     for idx, value in enumerate(lzc_values):
-        if idx == 0 or not np.isfinite(value):
+        if idx == 0:
             colors.append("black")
             continue
 
         prev = lzc_values[idx - 1]
-        if not np.isfinite(prev) or prev == 0:
+        if prev == 0:
             colors.append("red")
             continue
 
@@ -302,7 +302,7 @@ def point_transition_colors(segments_windows_pd, threshold):
     return colors
 
 
-def plot_primary_lzc_figure(segments_windows_pd, stabilization_window, threshold, save_path):
+def plot_relative_lzc_figure(segments_windows_pd, stabilization_window, threshold, save_path):
     fig, ax = plt.subplots(figsize=(20, 6))
 
     x = segments_windows_pd["Window_Sec"].to_numpy(dtype=float)
@@ -332,7 +332,7 @@ def plot_primary_lzc_figure(segments_windows_pd, stabilization_window, threshold
     ax.legend(handles=legend_items, loc="best")
     fig.tight_layout()
 
-    save_path = save_path + "_primary_lzc.png"
+    save_path = save_path + "_relative.png"
     fig.savefig(save_path, dpi=180)
     print(f"Saved figure: {save_path}")
     plt.show()
@@ -345,6 +345,8 @@ def plot_primary_lzc_figure(segments_windows_pd, stabilization_window, threshold
 def main():
     args = parse_args()
     rng = random.Random(DEFAULT_RANDOM_SEED)
+    min_segment_length_samples = max(args.windows) * args.windows_per_segment * args.fs
+    print(f"\nMinimum segment length required for analysis: {min_segment_length_samples:.0f} samples ({min_segment_length_samples / args.fs:.1f} seconds)")
 
     # OBTAIN NECESSARY SEGMENTS
 
@@ -361,21 +363,28 @@ def main():
     pre_segments = {}
     n2o_segments = {}
 
+    print("\nFiles discovered for analysis:")
     for path in files:
         name = os.path.splitext(os.path.basename(path))[0]
         mat_data = loadmat(path)
         file_pre_segments = cell_array_to_list(mat_data.get("pre_segments", np.empty((0, 0), dtype=object)))
         file_n2o_segments = cell_array_to_list(mat_data.get("n2o_segments", np.empty((0, 0), dtype=object)))
 
+        print(f"  - {name} | pre-segments: {len(file_pre_segments)} | n2o-segments: {len(file_n2o_segments)}")
+
         if len(pre_segments) < args.sample_size:
             for idx, pre_seg in enumerate(file_pre_segments):
-                if len(pre_seg) >= max(args.windows) * args.fs * args.windows_per_segment:
+                print(f"    - Pre-segment {idx} | {len(pre_seg)} samples | {min_segment_length_samples:.0f} required")
+                if len(pre_seg) >= min_segment_length_samples:
                     pre_segments[name + f"_{idx}"] = pre_seg
+                    print(f"      -> ADDED")
 
         if len(n2o_segments) < args.sample_size:
             for idx, n2o_seg in enumerate(file_n2o_segments):
-                if len(n2o_seg) >= max(args.windows) * args.fs * args.windows_per_segment:
+                print(f"    - N2O-segment {idx} | {len(n2o_seg)} samples | {min_segment_length_samples:.0f} required")
+                if len(n2o_seg) >= min_segment_length_samples:
                     n2o_segments[name + f"_{idx}"] = n2o_seg
+                    print(f"      -> ADDED")
 
         if len(pre_segments) >= args.sample_size and len(n2o_segments) >= args.sample_size:
             break
@@ -418,7 +427,7 @@ def main():
 
     print_summary_overview(segments_pd, segments_windows_pd, stabilization_window, args.stability_threshold)
     plot_results(segments_pd, segments_windows_pd, stabilization_window, args.stability_threshold, save_path)
-    plot_primary_lzc_figure(segments_windows_pd, stabilization_window, args.stability_threshold, save_path)
+    plot_relative_lzc_figure(segments_windows_pd, stabilization_window, args.stability_threshold, save_path)
     print("\n")
 
 
