@@ -14,13 +14,15 @@ from scipy.io import loadmat
 # Configuration
 # ---------------------------
 
-DEFAULT_WINDOWS_SEC = [20, 40, 60, 80, 100, 120, 140, 160, 180, 200, 220, 240, 260, 280, 300]
-# DEFAULT_WINDOWS_SEC = [10, 20, 30]
-DEFAULT_SAMPLE_SIZE = 147000  # 147 is all
-# DEFAULT_SAMPLE_SIZE = 3
-DEFAULT_INPUT_DIR = "data_khodadad2018_200Hz"
+script_dir = os.path.dirname(os.path.abspath(__file__))
+
+# DEFAULT_WINDOWS_SEC = [20, 40, 60, 80, 100, 120, 140, 160, 180, 200, 220, 240, 260, 280, 300]
+DEFAULT_WINDOWS_SEC = [10, 20, 30]
+# DEFAULT_SAMPLE_SIZE = 147000
+DEFAULT_SAMPLE_SIZE = 3
 DEFAULT_PATTERN = "*.mat"
-DEFAULT_OUTPUT_DIR = "figures/complexity_sensitivity_window"
+DEFAULT_INPUT_DIR = os.path.abspath(os.path.join(script_dir, "..", "data_khodadad2018_200Hz"))
+DEFAULT_OUTPUT_DIR = os.path.abspath(os.path.join(script_dir, "..", "figures", "complexity_sensitivity_window"))
 DEFAULT_RANDOM_SEED = 42
 DEFAULT_WINDOWS_PER_SEGMENT = 5
 DEFAULT_FS = 200.0
@@ -416,7 +418,8 @@ def main():
     # Estimate stabilization window based on relative change heuristic
     stabilization_window = estimate_stabilization_window(segments_windows_pd, args.stability_threshold)
 
-    method_name = args.input_dir[5:]  # to remove "data_" prefix
+    input_folder = os.path.basename(os.path.normpath(args.input_dir))
+    method_name = input_folder[5:]  # to remove "data_" prefix
     output_stem = f"lzc_window_{method_name}_n{len(segments)}"
     save_path = os.path.join(args.output_dir, output_stem)
 

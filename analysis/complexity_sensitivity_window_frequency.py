@@ -2,6 +2,7 @@ import argparse
 import glob
 import os
 import random
+import time
 
 import antropy as ant
 import matplotlib.pyplot as plt
@@ -15,19 +16,21 @@ from scipy.io import loadmat
 # Configuration
 # ---------------------------
 
+script_dir = os.path.dirname(os.path.abspath(__file__))
+
 DEFAULT_WINDOWS_SEC = [20, 40, 60, 80, 100, 120, 140, 160, 180, 200, 220, 240, 260, 280, 300]
-DEFAULT_WINDOWS_SEC = [10, 20, 30]
-DEFAULT_FS_TARGETS = [3, 6, 9, 12, 15, 20, 30, 40, 50, 60, 80, 100, 120, 140, 160, 180, 200]
-DEFAULT_FS_TARGETS = [6, 100, 200]
-DEFAULT_SAMPLE_SIZE = 147000  # 147 is all
-DEFAULT_SAMPLE_SIZE = 3
-DEFAULT_INPUT_DIR = "data_khodadad2018_200Hz"
+# DEFAULT_WINDOWS_SEC = [10, 20, 30]
+DEFAULT_FS_TARGETS = [3, 6, 9, 12, 15, 20, 30, 40, 50, 60, 80, 100, 120, 140, 160, 180, 200, 250, 300, 350, 400, 500]
+# DEFAULT_FS_TARGETS = [6, 100, 200]
+DEFAULT_SAMPLE_SIZE = 147000
+# DEFAULT_SAMPLE_SIZE = 3
 DEFAULT_PATTERN = "*.mat"
-DEFAULT_OUTPUT_DIR = "figures/complexity_sensitivity_window_frequency"
+DEFAULT_INPUT_DIR = os.path.abspath(os.path.join(script_dir, "..", "data_khodadad2018_200Hz"))
+DEFAULT_OUTPUT_DIR = os.path.abspath(os.path.join(script_dir, "..", "figures", "complexity_sensitivity_window_frequency"))
 DEFAULT_RANDOM_SEED = 42
 DEFAULT_WINDOWS_PER_SEGMENT = 5
-DEFAULT_WINDOWS_PER_SEGMENT = 3
-DEFAULT_FS = 200.0
+# DEFAULT_WINDOWS_PER_SEGMENT = 3
+DEFAULT_FS = 500.0  # TODO - add automatic determination
 
 
 def parse_args():
@@ -137,60 +140,53 @@ def aggregate(results):
 
 
 def estimate_stabilization(summary, threshold):
-    """Find stabilization point considering both Window_Sec and FS dimensions.
-    
-    Returns a dict with window_sec and fs where both dimensions show relative change < threshold,
-    or None if no clear stabilization is found.
-    """
     windows = sorted(summary["Window_Sec"].unique())
     fs_values = sorted(summary["FS"].unique())
-    
-    # For each window size, find where FS stabilizes
-    window_stabilizations = {}
-    for window_sec in windows:
-        window_data = summary[summary["Window_Sec"] == window_sec].sort_values("FS")
-        rel_changes = window_data["LZC_Rel_Change_Within_Window"].to_numpy(dtype=float)
-        fs_vals = window_data["FS"].to_numpy(dtype=float)
-        
-        for idx in range(1, len(fs_vals)):
-            if np.isfinite(rel_changes[idx]) and rel_changes[idx] < threshold:
-                if idx + 1 < len(fs_vals):
-                    if np.isfinite(rel_changes[idx + 1]) and rel_changes[idx + 1] < threshold:
-                        window_stabilizations[window_sec] = float(fs_vals[idx])
-                        break
+
+    rel_change_window = summary["LZC_Rel_Change_Within_Window"].to_numpy(dtype=float)
+    rel_change_fs = summary["LZC_Rel_Change_Within_FS"].to_numpy(dtype=float)
+
+    stabilization_points = []
+
+    # this can be computationally improved by calculating it backwards
+
+    for w_idx in range(1, len(windows)):
+        for f_idx in range(1, len(fs_values)):
+            current_window_change = rel_change_window[w_idx]
+            current_fs_change = rel_change_fs[f_idx]
+            if current_window_change <= threshold and current_fs_change <= threshold:
+                
+                next_window_stable = False
+                if w_idx + 1 < len(windows):
+                    next_window_change = rel_change_window[w_idx + 1]
+                    if next_window_change <= threshold:
+                        next_window_stable = True
                 else:
-                    window_stabilizations[window_sec] = float(fs_vals[idx])
-                    break
-    
-    # For each FS, find where Window_Sec stabilizes
-    fs_stabilizations = {}
-    for fs_val in fs_values:
-        fs_data = summary[summary["FS"] == fs_val].sort_values("Window_Sec")
-        rel_changes = fs_data["LZC_Rel_Change_Within_FS"].to_numpy(dtype=float)
-        windows_vals = fs_data["Window_Sec"].to_numpy(dtype=float)
-        
-        for idx in range(1, len(windows_vals)):
-            if np.isfinite(rel_changes[idx]) and rel_changes[idx] < threshold:
-                if idx + 1 < len(windows_vals):
-                    if np.isfinite(rel_changes[idx + 1]) and rel_changes[idx + 1] < threshold:
-                        fs_stabilizations[fs_val] = float(windows_vals[idx])
-                        break
+                    next_window_stable = True
+
+                next_fs_stable = False
+                if f_idx + 1 < len(fs_values):
+                    next_fs_change = rel_change_fs[f_idx + 1]
+                    if next_fs_change <= threshold:
+                        next_fs_stable = True
                 else:
-                    fs_stabilizations[fs_val] = float(windows_vals[idx])
-                    break
-    
-    # Find a (window_sec, fs) pair where both stabilize together
-    for window_sec, stable_fs in window_stabilizations.items():
-        for fs_val, stable_window in fs_stabilizations.items():
-            if fs_val >= stable_fs and window_sec >= stable_window:
-                return {"window_sec": float(window_sec), "fs": float(fs_val)}
-    
-    # If no joint stabilization, return the earliest stabilization
-    if window_stabilizations:
-        earliest_window = min(window_stabilizations.keys())
-        return {"window_sec": float(earliest_window), "fs": float(window_stabilizations[earliest_window])}
-    
-    return None
+                    next_fs_stable = True
+
+                stability = sum([next_window_stable, next_fs_stable])
+                point = {"window_sec": float(windows[w_idx]), "fs": float(fs_values[f_idx]), "stability": stability}
+                stabilization_points.append(point)
+
+            elif current_window_change <= threshold or current_fs_change <= threshold:
+                point = {"window_sec": float(windows[w_idx]), "fs": float(fs_values[f_idx]), "stability": -1}
+                stabilization_points.append(point)
+
+    # sort stabilization points by stability score (descending), window size (ascending) and FS (ascending)
+    stabilization_points = sorted(
+        stabilization_points,
+        key=lambda x: (-x["stability"], x["window_sec"], x["fs"]),
+    )
+
+    return stabilization_points
 
 
 def process_segment(segment, window_sizes_sec, n_windows_per_segment, fs, fs_targets, rng):
@@ -249,7 +245,7 @@ def process_segment(segment, window_sizes_sec, n_windows_per_segment, fs, fs_tar
 # Summaries & Plots
 # ---------------------------
 
-def print_summary_overview(segments_pd, segments_windows_pd, stabilization, threshold):
+def print_summary_overview(segments_pd, segments_windows_pd, stabilizations, threshold):
     print("\n" + "=" * 72)
     print("LZC COMPLEXITY WINDOW × FREQUENCY SENSITIVITY")
     print("=" * 72)
@@ -273,41 +269,65 @@ def print_summary_overview(segments_pd, segments_windows_pd, stabilization, thre
             f"balance={row['Binary_Balance_Mean']:.4f}"
         )
 
-    if stabilization is not None:
-        print(f"\nEstimated stabilization: Window ~{stabilization['window_sec']:.0f}s × FS ~{stabilization['fs']:.0f}Hz")
+    if stabilizations:
+        print("\nEstimated stabilization points (sorted by stability score):")
+        for stab in stabilizations:
+            stab_window = stab["window_sec"]
+            stab_fs = stab["fs"]
+            stab_score = stab["stability"]
+            stab_desc = "fully stable" if stab_score == 2 else ("stable" if stab_score >= 0 else "partially stable")
+            print(f"  Stabilization candidate: Window ~{stab_window:.0f}s × FS ~{stab_fs:.0f}Hz ({stab_desc})")
     else:
-        print("\nNo clear stabilization point found under the current heuristic.")
+        print("\nNo clear stabilization points found under the current heuristic.")
 
     print("=" * 72 + "\n")
 
 
-def plot_results(segments_pd, segments_windows_pd, stabilization, threshold, save_path):
-    fig, axes = plt.subplots(3, 1, figsize=(18, 14), sharex=False)
+def plot_results(segments_pd, segments_aggregate_pd, stabilizations, threshold, save_path):
+    fig, axes = plt.subplots(2, 1, figsize=(18, 14), sharex=False)
 
     # Top: LZC across window sizes for each FS
     ax1 = axes[0]
-    for fs_val in sorted(segments_windows_pd["FS"].unique()):
-        fs_data = segments_windows_pd[segments_windows_pd["FS"] == fs_val].sort_values("Window_Sec")
+    for segment_name, grp in segments_pd.groupby("FS"):
+        grp = grp.sort_values("Window_Sec")
         ax1.plot(
-            fs_data["Window_Sec"],
-            fs_data["LZC_Mean_Mean"],
-            marker="o",
-            linewidth=1.5,
+            grp["Window_Sec"],
+            grp["LZC_Mean"],
+            color="0.75",
+            linewidth=1.0,
             alpha=0.7,
-            label=f"FS={fs_val:.0f}Hz",
         )
-    if stabilization is not None:
-        ax1.axvline(stabilization["window_sec"], color="red", linestyle="--", linewidth=2, label=f"Stabil. Window ~{stabilization['window_sec']:.0f}s")
+
+    # Aggregate across FS to get one error bar per window size
+    window_summary = segments_aggregate_pd.groupby("Window_Sec").agg({
+        "LZC_Mean_Mean": "mean",
+        "LZC_Mean_Std": "mean",
+    }).reset_index()
+    
+    ax1.errorbar(
+        window_summary["Window_Sec"],
+        window_summary["LZC_Mean_Mean"],
+        yerr=window_summary["LZC_Mean_Std"],
+        marker="o",
+        capsize=4,
+        linewidth=2.0,
+        color="#1f77b4",
+        label="Mean across sampled segments",
+    )
+
+    if stabilizations:
+        first_stabilization_label = f"Full Stabilization ~ {stabilizations[0]['window_sec']:.0f}s & {stabilizations[0]['fs']:.0f}Hz"
+        ax1.axvline(stabilizations[0]["window_sec"], color="red", linestyle="--", linewidth=2, label=first_stabilization_label)
     ax1.set_ylabel("Normalized LZC")
     ax1.set_xlabel("Window Length [s]")
     ax1.set_title("LZC Across Window Sizes (each line = different FS)")
     ax1.grid(alpha=0.25)
     ax1.legend(loc="best", fontsize=8)
 
-    # Middle: LZC across FS for each window
+    # Bottom: LZC across FS for each window
     ax2 = axes[1]
-    for window_sec in sorted(segments_windows_pd["Window_Sec"].unique()):
-        window_data = segments_windows_pd[segments_windows_pd["Window_Sec"] == window_sec].sort_values("FS")
+    for window_sec in sorted(segments_aggregate_pd["Window_Sec"].unique()):
+        window_data = segments_aggregate_pd[segments_aggregate_pd["Window_Sec"] == window_sec].sort_values("FS")
         ax2.plot(
             window_data["FS"],
             window_data["LZC_Mean_Mean"],
@@ -316,36 +336,15 @@ def plot_results(segments_pd, segments_windows_pd, stabilization, threshold, sav
             alpha=0.7,
             label=f"Window={window_sec:.0f}s",
         )
-    if stabilization is not None:
-        ax2.axvline(stabilization["fs"], color="red", linestyle="--", linewidth=2, label=f"Stabil. FS ~{stabilization['fs']:.0f}Hz")
+
+    if stabilizations:
+        first_stabilization_label = f"Full Stabilization ~ {stabilizations[0]['fs']:.0f}Hz & {stabilizations[0]['window_sec']:.0f}s"
+        ax2.axvline(stabilizations[0]["fs"], color="red", linestyle="--", linewidth=2, label=first_stabilization_label)
     ax2.set_ylabel("Normalized LZC")
     ax2.set_xlabel("Sampling Rate [Hz]")
     ax2.set_title("LZC Across Sampling Rates (each line = different window size)")
     ax2.grid(alpha=0.25)
     ax2.legend(loc="best", fontsize=8)
-
-    # Bottom: binary balance
-    ax3 = axes[2]
-    for fs_val in sorted(segments_windows_pd["FS"].unique()):
-        fs_data = segments_windows_pd[segments_windows_pd["FS"] == fs_val].sort_values("Window_Sec")
-        ax3.errorbar(
-            fs_data["Window_Sec"],
-            fs_data["Binary_Balance_Mean"],
-            yerr=fs_data["Binary_Balance_Std"],
-            marker="o",
-            capsize=3,
-            linewidth=1.5,
-            alpha=0.7,
-            label=f"FS={fs_val:.0f}Hz",
-        )
-    ax3.axhline(0.5, color="red", linestyle="--", linewidth=1.0, label="Ideal = 0.5")
-    if stabilization is not None:
-        ax3.axvline(stabilization["window_sec"], color="red", linestyle=":", linewidth=1.5, alpha=0.5)
-    ax3.set_xlabel("Window Length [s]")
-    ax3.set_ylabel("Binary Balance")
-    ax3.set_title("Binarization Quality (median threshold)")
-    ax3.grid(alpha=0.25)
-    ax3.legend(loc="best", fontsize=8)
 
     fig.tight_layout()
     save_path_png = save_path + ".png"
@@ -374,13 +373,12 @@ def point_transition_colors(segments_windows_pd, threshold):
     return colors
 
 
-def plot_relative_lzc_figure(segments_windows_pd, stabilization, threshold, save_path):
+def plot_lzc_relativity(segments_aggregate_pd, stabilizations, threshold, save_path):
     """Create heatmap-style visualization of 2D (window × FS) LZC landscape."""
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 6))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 8))
 
-    # Pivot for heatmap: Window_Sec rows, FS columns
-    windows = sorted(segments_windows_pd["Window_Sec"].unique())
-    fs_vals = sorted(segments_windows_pd["FS"].unique())
+    windows = sorted(segments_aggregate_pd["Window_Sec"].unique())
+    fs_vals = sorted(segments_aggregate_pd["FS"].unique())
     
     lzc_matrix = np.zeros((len(windows), len(fs_vals)))
     rel_change_window_matrix = np.zeros((len(windows), len(fs_vals)))
@@ -388,7 +386,7 @@ def plot_relative_lzc_figure(segments_windows_pd, stabilization, threshold, save
     
     for i, w in enumerate(windows):
         for j, f in enumerate(fs_vals):
-            row = segments_windows_pd[(segments_windows_pd["Window_Sec"] == w) & (segments_windows_pd["FS"] == f)]
+            row = segments_aggregate_pd[(segments_aggregate_pd["Window_Sec"] == w) & (segments_aggregate_pd["FS"] == f)]
             if len(row) > 0:
                 lzc_matrix[i, j] = row["LZC_Mean_Mean"].values[0]
                 rel_change_window_matrix[i, j] = row.get("LZC_Rel_Change_Within_Window", np.nan).values[0] if "LZC_Rel_Change_Within_Window" in row else np.nan
@@ -405,22 +403,38 @@ def plot_relative_lzc_figure(segments_windows_pd, stabilization, threshold, save
     ax1.set_title("Normalized LZC Complexity")
     plt.colorbar(im1, ax=ax1)
     
-    if stabilization is not None:
-        stab_w_idx = np.argmin(np.abs(np.array(windows) - stabilization["window_sec"]))
-        stab_f_idx = np.argmin(np.abs(np.array(fs_vals) - stabilization["fs"]))
-        ax1.plot(stab_f_idx, stab_w_idx, "r*", markersize=20, label="Stabilization point")
-        ax1.legend()
+    if stabilizations is not None and len(stabilizations) > 0:
+        for stab in stabilizations:
+            stab_w_idx = np.argmin(np.abs(np.array(windows) - stab["window_sec"]))
+            stab_f_idx = np.argmin(np.abs(np.array(fs_vals) - stab["fs"]))
+
+            marker_style = "ro"  # default for partially stable
+            if stab["stability"] == 2:
+                marker_style = "r*"
+            elif stab["stability"] >= 0:
+                marker_style = "r^"
+
+            ax1.plot(stab_f_idx, stab_w_idx, marker_style, markersize=20)
+
+        # Add legend for stabilization points
+        from matplotlib.lines import Line2D
+        legend_elements = [
+            Line2D([0], [0], marker="r*", color="w", label="Full Stabilization", markersize=15),
+            Line2D([0], [0], marker="r^", color="w", label="Stable in one dimension", markersize=15),
+            Line2D([0], [0], marker="ro", color="w", label="Partially Stable", markersize=15),
+        ]
+        ax1.legend(handles=legend_elements, loc="upper right", fontsize=8)
     
     # Relative change: max of both dimensions
     rel_change_max = np.maximum(np.abs(rel_change_window_matrix), np.abs(rel_change_fs_matrix))
-    im2 = ax2.imshow(rel_change_max < threshold, aspect="auto", origin="lower", cmap="RdYlGn")
+    im2 = ax2.imshow(rel_change_max <= threshold, aspect="auto", origin="lower", cmap="RdYlGn")
     ax2.set_xticks(range(len(fs_vals)))
     ax2.set_yticks(range(len(windows)))
     ax2.set_xticklabels([f"{int(f)}" for f in fs_vals], rotation=45)
     ax2.set_yticklabels([f"{int(w)}" for w in windows])
     ax2.set_xlabel("Sampling Rate [Hz]")
     ax2.set_ylabel("Window Length [s]")
-    ax2.set_title(f"Stabilized Region (relative change < {threshold:.1%})")
+    ax2.set_title(f"Stabilized Region (relative change <= {threshold:.1%})")
     
     fig.tight_layout()
     save_path_png = save_path + "_2d_landscape.png"
@@ -486,6 +500,10 @@ def plot_heatmap(segments_windows_pd, threshold, save_path):
 # ---------------------------
 
 def main():
+    print(f"\n{'='*50}WORK IN PROGRESS{'='*50}\n")
+    return  # to prevent accidental execution while still in development
+
+    time_start = time.time()
     args = parse_args()
     rng = random.Random(DEFAULT_RANDOM_SEED)
     min_segment_length_samples = max(args.windows) * args.windows_per_segment * args.fs
@@ -557,9 +575,10 @@ def main():
     # Aggregate results by window size across all segments
     segments_aggregate_pd = aggregate(segments_pd)
     # Estimate stabilization window-fs pairs based on relative change heuristic
-    stabilization = estimate_stabilization(segments_aggregate_pd, args.stability_threshold)
+    stabilizations = estimate_stabilization(segments_aggregate_pd, args.stability_threshold)
 
-    method_name = args.input_dir[5:]  # to remove "data_" prefix
+    input_folder = os.path.basename(os.path.normpath(args.input_dir))
+    method_name = input_folder[5:]  # to remove "data_" prefix
     output_stem = f"lzc_window_frequency_{method_name}_n{len(segments)}"
     save_path = os.path.join(args.output_dir, output_stem)
 
@@ -568,9 +587,12 @@ def main():
     segments_aggregate_pd.to_csv(csv_path, index=False)
     print(f"Saved summary CSV: {csv_path}")
 
-    print_summary_overview(segments_pd, segments_aggregate_pd, stabilization, args.stability_threshold)
-    plot_results(segments_pd, segments_aggregate_pd, stabilization, args.stability_threshold, save_path)
-    plot_relative_lzc_figure(segments_aggregate_pd, stabilization, args.stability_threshold, save_path)
+    print(f"\nTotal execution time: {(time.time() - time_start) / 60:.2f} minutes")
+
+    print_summary_overview(segments_pd, segments_aggregate_pd, stabilizations, args.stability_threshold)
+    
+    plot_results(segments_pd, segments_aggregate_pd, stabilizations, args.stability_threshold, save_path)
+    plot_lzc_relativity(segments_aggregate_pd, stabilizations, args.stability_threshold, save_path)
     plot_heatmap(segments_aggregate_pd, args.stability_threshold, save_path)
     print("\n")
 

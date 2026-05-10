@@ -1,4 +1,4 @@
-function plot_resp_and_ecg_data(X)
+function plot_resp_ecg_data(X)
 
     % X is N x 2 double: [resp, ecg]
     fs   = 2000;                % original sampling rate in Hz

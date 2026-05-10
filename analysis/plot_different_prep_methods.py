@@ -10,6 +10,9 @@ from scipy.io import loadmat
 
 DEFAULT_METHODS = ["25Hz", "khodadad2018-25Hz", "manual_nk2-25Hz", "biosppy-25Hz"]
 
+script_dir = os.path.dirname(os.path.abspath(__file__))
+folder_path = os.path.abspath(os.path.join(script_dir, "..", "data_clean_segmented"))
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -20,7 +23,7 @@ def parse_args():
     )
     parser.add_argument(
         "--input-dir",
-        default="../data_clean_segmented",
+        default=folder_path,
         help="Directory containing files like P003-1-biosppy.mat",
     )
     parser.add_argument(
@@ -265,6 +268,9 @@ def plot_prefix_comparison(prefix, method_data, methods, output_dir):
 
 
 def main():
+    print(f"\n{'='*50}SLIGHTLY OUTDATED\nneeds the input folder structure to be updated{'='*50}\n")
+    return  # needs the input folder structure to be updated
+
     args = parse_args()
 
     if not os.path.isdir(args.input_dir):

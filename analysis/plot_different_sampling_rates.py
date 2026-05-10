@@ -7,6 +7,10 @@ import numpy as np
 from scipy.io import loadmat
 
 
+script_dir = os.path.dirname(os.path.abspath(__file__))
+folder_path = os.path.abspath(os.path.join(script_dir, "..", "data_raw"))
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description=(
@@ -16,7 +20,7 @@ def parse_args():
     )
     parser.add_argument(
         "--input-dir",
-        default="../data_raw",
+        default=folder_path,
         help="Directory containing participant .mat files",
     )
     parser.add_argument(

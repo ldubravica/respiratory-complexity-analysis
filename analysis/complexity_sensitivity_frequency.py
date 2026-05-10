@@ -5,6 +5,7 @@ import random
 
 import antropy as ant
 import matplotlib.pyplot as plt
+import neurokit2 as nk
 import numpy as np
 import pandas as pd
 from scipy.io import loadmat
@@ -14,23 +15,26 @@ from scipy.io import loadmat
 # Configuration
 # ---------------------------
 
-DEFAULT_SAMPLING_RATES = [3, 6, 9, 12, 15, 20, 30, 40, 50, 60, 80, 100, 120, 140, 160, 180, 200]
-DEFAULT_SAMPLING_RATES = [6, 100, 200]
-DEFAULT_SAMPLE_SIZE = 147000  # 147 is all
-DEFAULT_INPUT_DIR = "data_khodadad2018_200Hz"
+script_dir = os.path.dirname(os.path.abspath(__file__))
+
+# DEFAULT_FS_TARGETS = [3, 6, 9, 12, 15, 20, 30, 40, 50, 60, 80, 100, 120, 140, 160, 180, 200, 225, 250, 275, 300, 325, 350, 375, 400, 425, 450, 475, 500, 600, 700, 800, 900, 1000]
+DEFAULT_FS_TARGETS = [3, 6, 9, 12, 15]
+DEFAULT_WINDOW_SEC = 120  # test out also 120
+# DEFAULT_SAMPLE_SIZE = 147000
+DEFAULT_SAMPLE_SIZE = 15
 DEFAULT_PATTERN = "*.mat"
-DEFAULT_OUTPUT_DIR = "figures/complexity_sensitivity_frequency"
+DEFAULT_INPUT_DIR = os.path.abspath(os.path.join(script_dir, "..", "data_khodadad2018_200Hz"))
+DEFAULT_OUTPUT_DIR = os.path.abspath(os.path.join(script_dir, "..", "figures", "complexity_sensitivity_frequency"))
 DEFAULT_RANDOM_SEED = 42
 DEFAULT_WINDOWS_PER_SEGMENT = 5
-DEFAULT_FS = 200.0
-
-DEFAULT_WINDOW_SEC = 100  # turn into a list for 2D analysis
+# DEFAULT_WINDOWS_PER_SEGMENT = 3
+DEFAULT_FS = 500.0
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
         description=(
-            "Run respiratory LZC sensitivity analysis over window sizes. "
+            "Run respiratory LZC sensitivity analysis over sampling rates. "
             "Expects .mat files output from prep.py with pre_segments, n2o_segments, and fs fields."
         )
     )
@@ -47,12 +51,16 @@ def parse_args():
         help="Sampling rate of the data",
     )
     parser.add_argument(
+        "--fs-targets", type=float, nargs="+", default=DEFAULT_FS_TARGETS,
+        help="Sampling rates to test (example: --fs-targets 100 200 300)",
+    )
+    parser.add_argument(
         "--sample-size", type=int, default=DEFAULT_SAMPLE_SIZE,
         help="Number of participant files to analyze",
     )
     parser.add_argument(
-        "--sampling-rates", type=int, nargs="+", default=DEFAULT_SAMPLING_RATES,
-        help="Sampling rates in Hz to test (example: --sampling-rates 6 100 200)",
+        "--window", type=float, default=DEFAULT_WINDOW_SEC,
+        help="Window sizes in seconds to test (example: --window 10)",
     )
     parser.add_argument(
         "--windows-per-segment", type=int, default=DEFAULT_WINDOWS_PER_SEGMENT,
@@ -92,9 +100,9 @@ def cell_array_to_list(cell_array):
     return segments
 
 
-def group_by_window_size(results):
+def group_by_sampling_rate(results):
     summary = (
-        results.groupby("Sampling_Rate_Hz")
+        results.groupby("FS")
         .agg(
             N_Segments=("Name", "nunique"),
             LZC_Mean_Mean=("LZC_Mean", "mean"),
@@ -104,7 +112,7 @@ def group_by_window_size(results):
             Binary_Balance_Std=("Binary_Balance_Mean", "std"),
         )
         .reset_index()
-        .sort_values("Sampling_Rate_Hz")
+        .sort_values("FS")
     )
 
     summary["LZC_Abs_Delta"] = summary["LZC_Mean_Mean"].diff().abs()
@@ -114,34 +122,34 @@ def group_by_window_size(results):
     return summary
 
 
-def estimate_stabilization_window(summary, threshold):
+def estimate_stabilization_fs(summary, threshold):
     rel_change = summary["LZC_Rel_Change"].to_numpy(dtype=float)
-    sampling_rates = summary["Sampling_Rate_Hz"].to_numpy(dtype=float)
+    fs_vals = summary["FS"].to_numpy(dtype=float)
 
     # Find 1st sampling rate where the relative change is below the threshold.
     # If next value exists, check if it's below the threshold to reduce false positives.
-    for idx in range(1, len(sampling_rates)):
+    for idx in range(1, len(fs_vals)):
         current = rel_change[idx]
         if current < threshold:
-            if idx + 1 < len(sampling_rates):
+            if idx + 1 < len(fs_vals):
                 next_val = rel_change[idx + 1]
                 if next_val < threshold:
-                    return float(sampling_rates[idx])
+                    return float(fs_vals[idx])
             else:
-                return float(sampling_rates[idx])
+                return float(fs_vals[idx])
 
     return None
 
 
-def process_segment(segment, window_sizes_sec, n_windows_per_segment, fs, rng):
-    max_window_points = int(round(float(max(window_sizes_sec)) * fs))
-    min_required_len = n_windows_per_segment * max_window_points
+def process_segment(segment, window_sec, n_windows_per_segment, fs, fs_targets, rng):
+    window_points = int(round(float(window_sec) * fs))
+    min_required_len = n_windows_per_segment * window_points
 
     if len(segment) < min_required_len:  # maybe segment.size?
         return pd.DataFrame()
 
-    segment_windows_info = []
-    for window_sec in window_sizes_sec:  # maybe add track progress tqdm?
+    segment_fs_info = []
+    for fs_target in fs_targets:  # maybe add track progress tqdm?
         n_window_samples = int(round(window_sec * fs))
         lzc_values = []
         balance_values = []
@@ -154,15 +162,21 @@ def process_segment(segment, window_sizes_sec, n_windows_per_segment, fs, rng):
 
         for start in starts:
             window = segment[start : start + n_window_samples]
-            binary = window > np.median(window).item()
+
+            window_ds = window
+            if fs_target != fs:  # Resample the window to the target frequency
+                window_ds = np.asarray(
+                    nk.signal_resample(window, sampling_rate=fs, desired_sampling_rate=fs_target), dtype=float)
+
+            binary = window_ds > np.median(window_ds).item()
             lzc = ant.lziv_complexity(binary, normalize=True)
             lzc_values.append(lzc)
             balance_values.append(float(np.mean(binary)))
 
         lzc_values = np.asarray(lzc_values, dtype=float)
         balance_values = np.asarray(balance_values, dtype=float)
-        segment_windows_info.append({
-            "Window_Sec": float(window_sec),
+        segment_fs_info.append({
+            "FS": float(fs_target),
             "LZC_Mean": float(np.mean(lzc_values)),
             "LZC_Std": float(np.std(lzc_values)),
             "LZC_CV": float(np.std(lzc_values) / np.mean(lzc_values)) if np.mean(lzc_values) > 0 else np.nan,
@@ -170,48 +184,48 @@ def process_segment(segment, window_sizes_sec, n_windows_per_segment, fs, rng):
             "Binary_Balance_Std": float(np.std(balance_values))
         })
 
-    return pd.DataFrame(segment_windows_info)
+    return pd.DataFrame(segment_fs_info)
 
 # ---------------------------
 # Summaries & Plots
 # ---------------------------
 
-def print_summary_overview(segments_pd, segments_windows_pd, stabilization_window, threshold):
+def print_summary_overview(segments_pd, segments_aggregate_pd, stabilization_fs, threshold):
     print("\n" + "=" * 72)
     print("LZC COMPLEXITY WINDOW SENSITIVITY")
     print("=" * 72)
     print(f"Segments analyzed: {segments_pd['Name'].nunique()}")
-    print(f"Window sizes tested: {', '.join(str(int(w)) for w in segments_windows_pd['Window_Sec'])}")
+    print(f"Sampling rates tested: {', '.join(str(int(fs)) for fs in segments_aggregate_pd['FS'])}")
     print(f"Stability threshold: {threshold:.3f} relative change")
 
-    print("\nPer-window summary across sampled segments:")
-    for _, row in segments_windows_pd.iterrows():
+    print("\nPer-fs summary across sampled segments:")
+    for _, row in segments_aggregate_pd.iterrows():
         rel_change = row["LZC_Rel_Change"]
         rel_change_str = f"{rel_change:.4f}" if np.isfinite(rel_change) else "-.----"
         print(
-            f"  Window {row['Window_Sec']:.0f}s | "
+            f"  Sampling Rate {row['FS']:.0f} Hz | "
             f"LZC={row['LZC_Mean_Mean']:.4f} ± {row['LZC_Mean_Std']:.4f} | "
             f"CV={row['LZC_Mean_Std'] / row['LZC_Mean_Mean'] if row['LZC_Mean_Mean'] > 0 else np.nan:.4f} | "
             f"rel_change={rel_change_str} | "
             f"binary_balance={row['Binary_Balance_Mean']:.4f} | segments={int(row['N_Segments'])}"
         )
 
-    if stabilization_window is not None:
-        print(f"\nEstimated stabilization window: ~{stabilization_window:.0f} seconds")
+    if stabilization_fs is not None:
+        print(f"\nEstimated stabilization sampling rate: ~{stabilization_fs:.0f} Hz")
     else:
-        print("\nNo clear stabilization window found under the current heuristic.")
+        print("\nNo clear stabilization sampling rate found under the current heuristic.")
 
     print("=" * 72 + "\n")
 
 
-def plot_results(segments_pd, segments_windows_pd, stabilization_window, threshold, save_path):
-    fig, axes = plt.subplots(3, 1, figsize=(18, 14), sharex=True)
+def plot_results(segments_pd, segments_aggregate_pd, stabilization_fs, threshold, save_path):
+    fig, axes = plt.subplots(2, 1, figsize=(18, 14), sharex=True)
 
     # Top: individual file curves + mean curve
     ax1 = axes[0]
     for segment_name, grp in segments_pd.groupby("Name"):
         ax1.plot(
-            grp["Window_Sec"],
+            grp["FS"],
             grp["LZC_Mean"],
             color="0.75",
             linewidth=1.0,
@@ -219,61 +233,40 @@ def plot_results(segments_pd, segments_windows_pd, stabilization_window, thresho
         )
 
     ax1.errorbar(
-        segments_windows_pd["Window_Sec"],
-        segments_windows_pd["LZC_Mean_Mean"],
-        yerr=segments_windows_pd["LZC_Mean_Std"],
+        segments_aggregate_pd["FS"],
+        segments_aggregate_pd["LZC_Mean_Mean"],
+        yerr=segments_aggregate_pd["LZC_Mean_Std"],
         marker="o",
         capsize=4,
         linewidth=2.0,
         color="#1f77b4",
         label="Mean across sampled segments",
     )
-    if stabilization_window is not None:
-        ax1.axvline(stabilization_window, color="red", linestyle="--", label=f"Stabilization (<= {threshold:.0%}) ~{stabilization_window:.0f}s")
+    if stabilization_fs is not None:
+        ax1.axvline(stabilization_fs, color="red", linestyle="--", label=f"Stabilization (<= {threshold:.0%}) ~{stabilization_fs:.0f} Hz")
     ax1.set_ylabel("Normalized LZC")
-    ax1.set_title("Respiratory LZC Stability Across Window Sizes")
+    ax1.set_title("Respiratory LZC Stability Across Sampling Rates")
     ax1.grid(alpha=0.25)
     ax1.legend(loc="best")
 
-    # Middle: relative change between adjacent window sizes
+    # Bottom: relative change between adjacent sampling rates
     ax2 = axes[1]
     ax2.plot(
-        segments_windows_pd["Window_Sec"],
-        segments_windows_pd["LZC_Rel_Change"],
+        segments_aggregate_pd["FS"],
+        segments_aggregate_pd["LZC_Rel_Change"],
         marker="o",
         color="#ff7f0e",
         linewidth=2.0,
-        label="Relative change from previous window",
+        label="Relative change from previous sampling rate",
     )
     ax2.axhline(0.0, color="black", linewidth=1.0, alpha=0.4)
     ax2.axhline(float(threshold), color="red", linestyle="--", linewidth=1.0, alpha=0.7, label=f"{threshold:.0%} threshold")
-    if stabilization_window is not None:
-        ax2.axvline(stabilization_window, color="red", linestyle="--")
+    if stabilization_fs is not None:
+        ax2.axvline(stabilization_fs, color="red", linestyle="--")
     ax2.set_ylabel("Relative Change")
-    ax2.set_title("Relative Change in LZC Across Window Sizes")
+    ax2.set_title("Relative Change in LZC Across Sampling Rates")
     ax2.grid(alpha=0.25)
     ax2.legend(loc="best")
-
-    # Bottom: binary balance diagnostic
-    ax3 = axes[2]
-    ax3.errorbar(
-        segments_windows_pd["Window_Sec"],
-        segments_windows_pd["Binary_Balance_Mean"],
-        yerr=segments_windows_pd["Binary_Balance_Std"],
-        marker="o",
-        capsize=4,
-        linewidth=2.0,
-        color="#2ca02c",
-        label="Mean binary balance across sampled segments",
-    )
-    ax3.axhline(0.5, color="red", linestyle="--", linewidth=1.0, label="Ideal balance = 0.5")
-    if stabilization_window is not None:
-        ax3.axvline(stabilization_window, color="red", linestyle="--")
-    ax3.set_xlabel("Window Length [s]")
-    ax3.set_ylabel("Binary Balance")
-    ax3.set_title("Binarization Quality Check")
-    ax3.grid(alpha=0.25)
-    ax3.legend(loc="best")
 
     fig.tight_layout()
 
@@ -283,9 +276,9 @@ def plot_results(segments_pd, segments_windows_pd, stabilization_window, thresho
     plt.show()
 
 
-def point_transition_colors(segments_windows_pd, threshold):
+def point_transition_colors(segments_aggregate_pd, threshold):
     colors = []
-    lzc_values = segments_windows_pd["LZC_Mean_Mean"].to_numpy(dtype=float)
+    lzc_values = segments_aggregate_pd["LZC_Mean_Mean"].to_numpy(dtype=float)
 
     for idx, value in enumerate(lzc_values):
         if idx == 0:
@@ -303,18 +296,18 @@ def point_transition_colors(segments_windows_pd, threshold):
     return colors
 
 
-def plot_relative_lzc_figure(segments_windows_pd, stabilization_window, threshold, save_path):
+def plot_relative_lzc_figure(segments_aggregate_pd, stabilization_fs, threshold, save_path):
     fig, ax = plt.subplots(figsize=(20, 6))
 
-    x = segments_windows_pd["Window_Sec"].to_numpy(dtype=float)
-    y = segments_windows_pd["LZC_Mean_Mean"].to_numpy(dtype=float)
-    colors = point_transition_colors(segments_windows_pd, threshold)
+    x = segments_aggregate_pd["FS"].to_numpy(dtype=float)
+    y = segments_aggregate_pd["LZC_Mean_Mean"].to_numpy(dtype=float)
+    colors = point_transition_colors(segments_aggregate_pd, threshold)
 
     ax.plot(x, y, color="#1f77b4", linewidth=2.2, label="Normalized LZC")
     ax.scatter(x, y, c=colors, s=55, zorder=3, edgecolors="white", linewidths=0.6)
 
-    if stabilization_window is not None:
-        ax.axvline(stabilization_window, color="red", linestyle="--", label=f"Stabilization ~{stabilization_window:.0f}s")
+    if stabilization_fs is not None:
+        ax.axvline(stabilization_fs, color="red", linestyle="--", label=f"Stabilization ~{stabilization_fs:.0f} Hz")
 
     from matplotlib.lines import Line2D
 
@@ -323,11 +316,11 @@ def plot_relative_lzc_figure(segments_windows_pd, stabilization_window, threshol
         Line2D([0], [0], marker="o", color="w", markerfacecolor="green", markersize=8, label=f"<= {threshold:.0%} change"),
         Line2D([0], [0], marker="o", color="w", markerfacecolor="red", markersize=8, label=f"> {threshold:.0%} change"),
     ]
-    if stabilization_window is not None:
-        legend_items.append(Line2D([0], [0], color="red", linestyle="--", lw=1.5, label=f"Stabilization ~{stabilization_window:.0f}s"))
+    if stabilization_fs is not None:
+        legend_items.append(Line2D([0], [0], color="red", linestyle="--", lw=1.5, label=f"Stabilization ~{stabilization_fs:.0f} Hz"))
 
-    ax.set_title("Mean Respiratory LZC Across Window Sizes", fontsize=14)
-    ax.set_xlabel("Window Length [s]")
+    ax.set_title("Mean Respiratory LZC Across Sampling Rates", fontsize=14)
+    ax.set_xlabel("Sampling Rate [Hz]")
     ax.set_ylabel("Normalized LZC")
     ax.grid(alpha=0.25)
     ax.legend(handles=legend_items, loc="best")
@@ -346,7 +339,7 @@ def plot_relative_lzc_figure(segments_windows_pd, stabilization_window, threshol
 def main():
     args = parse_args()
     rng = random.Random(DEFAULT_RANDOM_SEED)
-    min_segment_length_samples = max(args.windows) * args.windows_per_segment * args.fs
+    min_segment_length_samples = args.window * args.windows_per_segment * args.fs
     print(f"\nMinimum segment length required for analysis: {min_segment_length_samples:.0f} samples ({min_segment_length_samples / args.fs:.1f} seconds)")
 
     # OBTAIN NECESSARY SEGMENTS
@@ -402,33 +395,34 @@ def main():
 
     # PROCESS EACH SEGMENT
 
-    segments_windows_info = []
+    segments_fs_info = []
     for segment_name, segment_data in segments.items():
         print(f"\nProcessing {segment_name}...")
-        segment_info = process_segment(segment_data, args.windows, args.windows_per_segment, args.fs, rng)
+        segment_info = process_segment(segment_data, args.window, args.windows_per_segment, args.fs, args.fs_targets, rng)
         segment_info.insert(0, "Name", segment_name)
-        segments_windows_info.append(segment_info)
+        segments_fs_info.append(segment_info)
 
     # SUMMARIZE & PLOT RESULTS
 
-    segments_pd = pd.concat(segments_windows_info, ignore_index=True)
-    # Aggregate results by window size across all segments
-    segments_windows_pd = group_by_window_size(segments_pd)
-    # Estimate stabilization window based on relative change heuristic
-    stabilization_window = estimate_stabilization_window(segments_windows_pd, args.stability_threshold)
+    segments_pd = pd.concat(segments_fs_info, ignore_index=True)
+    # Aggregate results by sampling rate across all segments
+    segments_fs_pd = group_by_sampling_rate(segments_pd)
+    # Estimate stabilization sampling rate based on relative change heuristic
+    stabilization_fs = estimate_stabilization_fs(segments_fs_pd, args.stability_threshold)
 
-    method_name = args.input_dir[5:]  # to remove "data_" prefix
-    output_stem = f"lzc_window_{method_name}_n{len(segments)}"
+    input_folder = os.path.basename(os.path.normpath(args.input_dir))
+    method_name = input_folder[5:]  # to remove "data_" prefix
+    output_stem = f"lzc_frequency_{method_name}_n{len(segments)}_{args.window:.0f}s"
     save_path = os.path.join(args.output_dir, output_stem)
 
     os.makedirs(args.output_dir, exist_ok=True)
     csv_path = save_path + "_summary.csv"
-    segments_windows_pd.to_csv(csv_path, index=False)
+    segments_fs_pd.to_csv(csv_path, index=False)
     print(f"Saved summary CSV: {csv_path}")
 
-    print_summary_overview(segments_pd, segments_windows_pd, stabilization_window, args.stability_threshold)
-    plot_results(segments_pd, segments_windows_pd, stabilization_window, args.stability_threshold, save_path)
-    plot_relative_lzc_figure(segments_windows_pd, stabilization_window, args.stability_threshold, save_path)
+    print_summary_overview(segments_pd, segments_fs_pd, stabilization_fs, args.stability_threshold)
+    plot_results(segments_pd, segments_fs_pd, stabilization_fs, args.stability_threshold, save_path)
+    plot_relative_lzc_figure(segments_fs_pd, stabilization_fs, args.stability_threshold, save_path)
     print("\n")
 
 
