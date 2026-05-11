@@ -24,7 +24,7 @@ def parse_args():
     return parser.parse_args()
 
 # ---------------------------
-# Phases & Tools
+# Tools
 # ---------------------------
 
 def cell_array_to_list(cell_array):
@@ -65,8 +65,8 @@ def epochize_segments(segments, epoch_length_samples):
 def main():
     args = parse_args()
 
-    preprocessing_info = args.input_pattern.replace('-', '_')
-    epochizing_info = f"epoch{int(round(args.epoch_length_sec))}s"
+    preprocessing_info = args.input_dir[5:]  # to remove "data_" prefix
+    epochizing_info = f"{int(round(args.epoch_length_sec))}s"
     out_directory = f"data_{preprocessing_info}_{epochizing_info}"
     os.makedirs(out_directory, exist_ok=True)
 
