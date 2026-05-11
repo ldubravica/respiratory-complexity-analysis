@@ -20,26 +20,35 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description=(
             "Compute normalized epoch-level LZC from epochized respiratory files, "
-            "compare pre vs n2o, and report statistical significance."
+            "compare pre vs dur, and report statistical significance."
         )
     )
     parser.add_argument("--pattern", default=FILE_PATTERN, help="Glob pattern for epochized files")
     parser.add_argument("--input-dir", default=INPUT_DIR, help="Directory with epochized .mat files")
     parser.add_argument("--skip-calculation", action="store_true", help="Skip LZC calculation and only print summary from existing CSV")
-    return parser.parse_args()
+    parser.add_argument("--csv-filename", default=None, help="Optional custom filename for output CSV (default: lzc_<input_dir>.csv)")
+    
+    args = parser.parse_args()
+    if args.csv_filename:
+        args.skip_calculation = True
+    
+    return args
 
 # ---------------------------
 # Main loop
 # ---------------------------
 
 def process_files(args):
-    print("\n")
+    print()
 
     # OBTAIN FILES TO PROCESS
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     method_name = args.input_dir[5:] # to remove "data_" prefix
-    csv_path = os.path.join(OUTPUT_DIR, f"lzc_{method_name}.csv")
+    if args.csv_filename:
+        csv_path = os.path.join(OUTPUT_DIR, args.csv_filename)
+    else:
+        csv_path = os.path.join(OUTPUT_DIR, f"lzc_{method_name}.csv")
 
     files = sorted(glob.glob(os.path.join(args.input_dir, args.pattern)))
     files_count = len(files)
@@ -55,10 +64,10 @@ def process_files(args):
         file_name = os.path.splitext(os.path.basename(path))[0]
         mat = loadmat(path)
         pre_epochs = mat.get("pre_epochs", np.empty((0, 0)))
-        n2o_epochs = mat.get("n2o_epochs", np.empty((0, 0)))
+        dur_epochs = mat.get("dur_epochs", np.empty((0, 0)))
 
-        total_epochs_file = pre_epochs.shape[0] + n2o_epochs.shape[0]
-        print(f"[{file_idx}/{files_count}] {file_name}: pre = {pre_epochs.shape[0]}\t| n2o = {n2o_epochs.shape[0]}\t| total = {total_epochs_file}")
+        total_epochs_file = pre_epochs.shape[0] + dur_epochs.shape[0]
+        print(f"[{file_idx}/{files_count}] {file_name}: pre = {pre_epochs.shape[0]}\t| dur = {dur_epochs.shape[0]}\t| total = {total_epochs_file}")
 
         for i, epoch in enumerate(pre_epochs):
             binary = epoch > np.median(epoch).item()
@@ -72,13 +81,13 @@ def process_files(args):
                 }
             )
 
-        for i, epoch in enumerate(n2o_epochs):
+        for i, epoch in enumerate(dur_epochs):
             binary = epoch > np.median(epoch).item()
             lzc_val = ant.lziv_complexity(binary, normalize=True)
             rows.append(
                 {
                     "file": file_name,
-                    "session": "n2o",
+                    "session": "dur",
                     "epoch_index": int(i),
                     "lzc": lzc_val,
                 }
@@ -98,7 +107,10 @@ def process_files(args):
 def main():
     args = parse_args()
     method_name = args.input_dir[5:]  # to remove "data_" prefix
-    csv_path = os.path.join(OUTPUT_DIR, f"lzc_{method_name}.csv")
+    if args.csv_filename:
+        csv_path = os.path.join(OUTPUT_DIR, args.csv_filename)
+    else:
+        csv_path = os.path.join(OUTPUT_DIR, f"lzc_{method_name}.csv")
 
     # IF --skip-calculation, READ EXISTING CSV INSTEAD OF RE-COMPUTING LZC
 
@@ -121,7 +133,10 @@ def main():
         .sort_values(by=["file", "session"])
     )
 
-    summary_csv_path = os.path.join(OUTPUT_DIR, f"lzc_{method_name}_summary.csv")
+    if args.csv_filename:
+        summary_csv_path = os.path.join(OUTPUT_DIR, args.csv_filename.replace(".csv", "_summary.csv"))
+    else:
+        summary_csv_path = os.path.join(OUTPUT_DIR, f"lzc_{method_name}_summary.csv")
     summary_df.to_csv(summary_csv_path, index=False)
 
     # print("\n")
@@ -133,11 +148,11 @@ def main():
     # print(summary_file_df)
     summary_file_df.columns = [
         "file",
-        "n2o_lzc_mean",
+        "dur_lzc_mean",
         "pre_lzc_mean",
-        "n2o_lzc_std",
+        "dur_lzc_std",
         "pre_lzc_std",
-        "n2o_epoch_count",
+        "dur_epoch_count",
         "pre_epoch_count",
     ]
     # print(summary_file_df)
@@ -151,18 +166,18 @@ def main():
 
     for _, row in summary_file_df.iterrows():
         pre_is_nan = np.isnan(row["pre_lzc_mean"])
-        n2o_is_nan = np.isnan(row["n2o_lzc_mean"])
+        dur_is_nan = np.isnan(row["dur_lzc_mean"])
         
         pre_lzc = f"{row['pre_lzc_mean']:.4f} ± {row['pre_lzc_std']:.4f} ({int(row['pre_epoch_count'])})" if not pre_is_nan else "-.---- ± -.----    "
-        n2o_lzc = f"{row['n2o_lzc_mean']:.4f} ± {row['n2o_lzc_std']:.4f} ({int(row['n2o_epoch_count'])})" if not n2o_is_nan else "-.---- ± -.----    "
+        dur_lzc = f"{row['dur_lzc_mean']:.4f} ± {row['dur_lzc_std']:.4f} ({int(row['dur_epoch_count'])})" if not dur_is_nan else "-.---- ± -.----    "
 
-        print(f"{row['file']}\t| Pre LZC: {pre_lzc}\t| N2O LZC: {n2o_lzc}")
+        print(f"{row['file']}\t| Pre LZC: {pre_lzc}\t| Dur LZC: {dur_lzc}")
 
     files_with_pre = summary_file_df[~summary_file_df["pre_lzc_mean"].isna()]["file"].tolist()
-    files_with_n2o = summary_file_df[~summary_file_df["n2o_lzc_mean"].isna()]["file"].tolist()
+    files_with_dur = summary_file_df[~summary_file_df["dur_lzc_mean"].isna()]["file"].tolist()
 
     print(f"\nAverage Pre LZC: {summary_file_df['pre_lzc_mean'].mean():.4f} ± {summary_file_df['pre_lzc_mean'].std():.4f} \t({len(files_with_pre)}/{files_count} files | {int(summary_file_df['pre_epoch_count'].sum())} epochs)")
-    print(f"Average N2O LZC: {summary_file_df['n2o_lzc_mean'].mean():.4f} ± {summary_file_df['n2o_lzc_mean'].std():.4f} \t({len(files_with_n2o)}/{files_count} files | {int(summary_file_df['n2o_epoch_count'].sum())} epochs)")
+    print(f"Average Dur LZC: {summary_file_df['dur_lzc_mean'].mean():.4f} ± {summary_file_df['dur_lzc_mean'].std():.4f} \t({len(files_with_dur)}/{files_count} files | {int(summary_file_df['dur_epoch_count'].sum())} epochs)")
 
     print(f"\nSaved CSV: {csv_path}")
     print(f"Saved Summary CSV: {summary_csv_path}")

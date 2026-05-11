@@ -13,7 +13,6 @@ DEFAULT_INPUT_DIR = "data_khodadad2018_200Hz"
 DEFAULT_EPOCH_LENGTH_SEC = 120.0
 DEFAULT_INPUT_PATTERN = ""
 
-
 def parse_args():
     parser = argparse.ArgumentParser(
         description=("Split filtered respiratory pre/during segments into epochs.")
@@ -44,8 +43,10 @@ def epochize_segments(segments, epoch_length_samples):
     epochs = []
     for segment in segments:
         n_epochs = len(segment) // epoch_length_samples
+        print(f"    {n_epochs} n_epochs = {len(segment)} samples // {epoch_length_samples} samples/epoch")
+
         if n_epochs == 0:
-            return np.empty((0, epoch_length_samples), dtype=float)
+            continue
 
         trimmed = np.asarray(segment[: n_epochs * epoch_length_samples], dtype=float)
         segment_epochs = trimmed.reshape(n_epochs, epoch_length_samples)
@@ -70,7 +71,10 @@ def main():
     out_directory = f"data_{preprocessing_info}_{epochizing_info}"
     os.makedirs(out_directory, exist_ok=True)
 
-    for fname in os.listdir(args.input_dir):
+    files = sorted(os.listdir(args.input_dir))
+    # files = files[:2]  # TESTING
+
+    for fname in files:
         if not fname.lower().endswith(".mat"):
             continue
 
@@ -82,9 +86,11 @@ def main():
 
         # 1) load filtered, downsampled, and segmented data
         mat_data = loadmat(path)
-        fs = float(mat_data["fs"])
+        fs = float(mat_data["fs"].item())
         pre_segments = cell_array_to_list(mat_data["pre_segments"])
-        n2o_segments = cell_array_to_list(mat_data["n2o_segments"])
+        dur_segments = cell_array_to_list(mat_data["dur_segments"])
+
+        # print(f"  Loaded {len(pre_segments)} pre segments and {len(dur_segments)} dur segments.")
 
         # 2) determine epoch length in samples
         epoch_length_samples = int(round(args.epoch_length_sec * fs))
@@ -93,10 +99,12 @@ def main():
             continue
 
         # 3) epochize segments
+        print("\n  Epochizing pre segments:", [cell.shape for cell in mat_data["pre_segments"].reshape(-1)])
         pre_epochs = epochize_segments(pre_segments, epoch_length_samples)
-        n2o_epochs = epochize_segments(n2o_segments, epoch_length_samples)
+        print("  Epochizing dur segments:", [cell.shape for cell in mat_data["dur_segments"].reshape(-1)])
+        dur_epochs = epochize_segments(dur_segments, epoch_length_samples)
 
-        if pre_epochs.shape[0] == 0 and n2o_epochs.shape[0] == 0:
+        if pre_epochs.shape[0] == 0 and dur_epochs.shape[0] == 0:
             print(f"  Skipping: no complete {args.epoch_length_sec}s epochs found.")
             continue
 
@@ -108,15 +116,15 @@ def main():
             out_path,
             {
                 "pre_epochs": pre_epochs,
-                "n2o_epochs": n2o_epochs,
+                "dur_epochs": dur_epochs,
                 "fs": fs,
                 "epoch_length_sec": float(args.epoch_length_sec),
             },
         )
 
-        print(f"  Saved {pre_epochs.shape[0]} pre epochs and {n2o_epochs.shape[0]} n2o epochs to {out_path}")
+        print(f"\n  Saved {pre_epochs.shape[0]} pre-epochs and {dur_epochs.shape[0]} dur-epochs to {out_path}")
 
 
 if __name__ == "__main__":
     main()
-    print("\n")
+    print()

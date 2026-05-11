@@ -95,7 +95,7 @@ def load_method_data(path):
         return float(arr[0]) if arr.size else np.nan
 
     fs = _scalar("fs")
-    n2o_start_sec = _scalar("n2o_start_sec")
+    dur_start_sec = _scalar("dur_start_sec")
 
     def _load_segments(key):
         raw = mat.get(key)
@@ -108,18 +108,18 @@ def load_method_data(path):
         return [np.asarray(c, dtype=float).reshape(-1) for c in raw.reshape(-1)]
 
     pre_segments = _load_segments("pre_segments")
-    n2o_segments = _load_segments("n2o_segments")
+    dur_segments = _load_segments("dur_segments")
 
     pre_flat = flatten_valid_segments(pre_segments)
-    n2o_flat = flatten_valid_segments(n2o_segments)
+    dur_flat = flatten_valid_segments(dur_segments)
 
     return {
         "fs": fs,
-        "n2o_start_sec": n2o_start_sec,
+        "dur_start_sec": dur_start_sec,
         "pre_segments": pre_segments,
-        "n2o_segments": n2o_segments,
+        "dur_segments": dur_segments,
         "pre_flat": pre_flat,
-        "n2o_flat": n2o_flat,
+        "dur_flat": dur_flat,
     }
 
 
@@ -164,23 +164,23 @@ def summarize_signal(x):
 
 def print_general_metrics(prefix, d):
     pre_stats = summarize_signal(d["pre_flat"])
-    n2o_stats = summarize_signal(d["n2o_flat"])
+    dur_stats = summarize_signal(d["dur_flat"])
 
     pre_dur = pre_stats["samples"] / d["fs"] if np.isfinite(d["fs"]) and d["fs"] > 0 else np.nan
-    n2o_dur = n2o_stats["samples"] / d["fs"] if np.isfinite(d["fs"]) and d["fs"] > 0 else np.nan
+    dur_dur = dur_stats["samples"] / d["fs"] if np.isfinite(d["fs"]) and d["fs"] > 0 else np.nan
 
     print(f"  [{prefix}] General Overview")
     print(
-        f"    fs={d['fs']:.3f} Hz | n2o_start={d['n2o_start_sec']:.3f}s | "
-        f"pre_segments={len(d['pre_segments'])} | n2o_segments={len(d['n2o_segments'])}"
+        f"    fs={d['fs']:.3f} Hz | dur_start={d['dur_start_sec']:.3f}s | "
+        f"pre_segments={len(d['pre_segments'])} | dur_segments={len(d['dur_segments'])}"
     )
     print(f"    PRE: samples={pre_stats['samples']}, duration={pre_dur:.2f}s")
-    print(f"    N2O: samples={n2o_stats['samples']}, duration={n2o_dur:.2f}s")
+    print(f"    DUR: samples={dur_stats['samples']}, duration={dur_dur:.2f}s")
 
 
 def print_method_metrics(prefix, method, d):
     pre_stats = summarize_signal(d["pre_flat"])
-    n2o_stats = summarize_signal(d["n2o_flat"])
+    dur_stats = summarize_signal(d["dur_flat"])
 
     print(f"  [{prefix}] Method: {method}")
     print(
@@ -188,8 +188,8 @@ def print_method_metrics(prefix, method, d):
         f"rms={pre_stats['rms']:.5f}, iqr={pre_stats['iqr']:.5f}, p2p={pre_stats['p2p']:.5f}"
     )
     print(
-        f"    N2O: mean={n2o_stats['mean']:.5f}, std={n2o_stats['std']:.5f}, "
-        f"rms={n2o_stats['rms']:.5f}, iqr={n2o_stats['iqr']:.5f}, p2p={n2o_stats['p2p']:.5f}"
+        f"    DUR: mean={dur_stats['mean']:.5f}, std={dur_stats['std']:.5f}, "
+        f"rms={dur_stats['rms']:.5f}, iqr={dur_stats['iqr']:.5f}, p2p={dur_stats['p2p']:.5f}"
     )
 
 
@@ -219,8 +219,8 @@ def print_pairwise_similarity(prefix, method_data, methods):
         for j in range(i + 1, len(present)):
             m1, m2 = present[i], present[j]
             c_pre = safe_corr(method_data[m1]["pre_flat"], method_data[m2]["pre_flat"])
-            c_n2o = safe_corr(method_data[m1]["n2o_flat"], method_data[m2]["n2o_flat"])
-            print(f"    {m1} vs {m2}: PRE corr={c_pre:.4f}, N2O corr={c_n2o:.4f}")
+            c_dur = safe_corr(method_data[m1]["dur_flat"], method_data[m2]["dur_flat"])
+            print(f"    {m1} vs {m2}: PRE corr={c_pre:.4f}, DUR corr={c_dur:.4f}")
 
 
 def plot_prefix_comparison(prefix, method_data, methods, output_dir):
@@ -239,10 +239,10 @@ def plot_prefix_comparison(prefix, method_data, methods, output_dir):
             t_pre = np.arange(pre.size) / fs
             axes[0].plot(t_pre, pre, linewidth=0.8, alpha=0.9, label=method)
 
-        n2o = d["n2o_flat"]
-        if n2o.size > 0:
-            t_n2o = np.arange(n2o.size) / fs
-            axes[1].plot(t_n2o, n2o, linewidth=0.8, alpha=0.9, label=method)
+        dur = d["dur_flat"]
+        if dur.size > 0:
+            t_dur = np.arange(dur.size) / fs
+            axes[1].plot(t_dur, dur, linewidth=0.8, alpha=0.9, label=method)
 
     axes[0].set_title(f"{prefix} - PRE session comparison")
     axes[0].set_xlabel("Time [s]")
@@ -250,7 +250,7 @@ def plot_prefix_comparison(prefix, method_data, methods, output_dir):
     axes[0].grid(alpha=0.25)
     axes[0].legend(loc="upper right")
 
-    axes[1].set_title(f"{prefix} - N2O session comparison")
+    axes[1].set_title(f"{prefix} - DUR session comparison")
     axes[1].set_xlabel("Time [s]")
     axes[1].set_ylabel("Amplitude")
     axes[1].grid(alpha=0.25)

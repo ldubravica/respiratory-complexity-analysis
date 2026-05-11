@@ -37,7 +37,7 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description=(
             "Run respiratory LZC sensitivity analysis over window sizes. "
-            "Expects .mat files output from prep.py with pre_segments, n2o_segments, and fs fields."
+            "Expects .mat files output from prep.py with pre_segments, dur_segments, and fs fields."
         )
     )
     parser.add_argument(
@@ -522,16 +522,16 @@ def main():
 
     rng.shuffle(files)
     pre_segments = {}
-    n2o_segments = {}
+    dur_segments = {}
 
     print("\nFiles discovered for analysis:")
     for path in files:
         name = os.path.splitext(os.path.basename(path))[0]
         mat_data = loadmat(path)
         file_pre_segments = cell_array_to_list(mat_data.get("pre_segments", np.empty((0, 0), dtype=object)))
-        file_n2o_segments = cell_array_to_list(mat_data.get("n2o_segments", np.empty((0, 0), dtype=object)))
+        file_dur_segments = cell_array_to_list(mat_data.get("dur_segments", np.empty((0, 0), dtype=object)))
 
-        print(f"  - {name} | pre-segments: {len(file_pre_segments)} | n2o-segments: {len(file_n2o_segments)}")
+        print(f"  - {name} | pre-segments: {len(file_pre_segments)} | dur-segments: {len(file_dur_segments)}")
 
         if len(pre_segments) < args.sample_size:
             for idx, pre_seg in enumerate(file_pre_segments):
@@ -540,25 +540,25 @@ def main():
                     pre_segments[name + f"_{idx}"] = pre_seg
                     print(f"      -> ADDED")
 
-        if len(n2o_segments) < args.sample_size:
-            for idx, n2o_seg in enumerate(file_n2o_segments):
-                print(f"    - N2O-segment {idx} | {len(n2o_seg)} samples | {min_segment_length_samples:.0f} required")
-                if len(n2o_seg) >= min_segment_length_samples:
-                    n2o_segments[name + f"_{idx}"] = n2o_seg
+        if len(dur_segments) < args.sample_size:
+            for idx, dur_seg in enumerate(file_dur_segments):
+                print(f"    - Dur-segment {idx} | {len(dur_seg)} samples | {min_segment_length_samples:.0f} required")
+                if len(dur_seg) >= min_segment_length_samples:
+                    dur_segments[name + f"_{idx}"] = dur_seg
                     print(f"      -> ADDED")
 
-        if len(pre_segments) >= args.sample_size and len(n2o_segments) >= args.sample_size:
+        if len(pre_segments) >= args.sample_size and len(dur_segments) >= args.sample_size:
             break
 
     print(f"\nFound {len(pre_segments)} pre-segments to analyze:")
     for path in set(list(pre_segments.keys())):
         print(f"  - {os.path.basename(path)}")
     
-    print(f"\nFound {len(n2o_segments)} n2o-segments to analyze:")
-    for path in set(list(n2o_segments.keys())):
+    print(f"\nFound {len(dur_segments)} dur-segments to analyze:")
+    for path in set(list(dur_segments.keys())):
         print(f"  - {os.path.basename(path)}")
 
-    segments = {**pre_segments, **n2o_segments}
+    segments = {**pre_segments, **dur_segments}
 
     # PROCESS EACH SEGMENT
 

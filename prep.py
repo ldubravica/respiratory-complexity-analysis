@@ -108,13 +108,13 @@ def segment_via_timestamps(data, fs, txt_path):
 
     if len(timestamps) == 0:
         pre_segments = [np.asarray(data, dtype=float)]
-        n2o_segments = []
-        return pre_segments, n2o_segments
+        dur_segments = []
+        return pre_segments, dur_segments
     
     first_ut9 = None
     second_ut9 = None
     pre_segments = []
-    n2o_segments = []
+    dur_segments = []
 
     idx_prev = 0
     for idx, event_type in timestamps:
@@ -131,10 +131,10 @@ def segment_via_timestamps(data, fs, txt_path):
         if first_ut9 is None:
             pre_segments.append(seg)
         elif second_ut9 is None:
-            n2o_segments.append(seg)
+            dur_segments.append(seg)
         idx_prev = idx
 
-    return pre_segments, n2o_segments
+    return pre_segments, dur_segments
 
 
 def list_to_cell_array(segments):
@@ -190,13 +190,13 @@ def main():
         # 2) splice into continuous segments using TXT timestamps
         txt_path = os.path.join(args.input_dir, os.path.splitext(fname)[0] + "-evt.txt")
         if os.path.exists(txt_path):
-            pre_segments, n2o_segments = segment_via_timestamps(prep_rsp, args.fs_target, txt_path)
+            pre_segments, dur_segments = segment_via_timestamps(prep_rsp, args.fs_target, txt_path)
         else:
             print(f"Skipping {fname}: TXT file not found.")
             continue
         
-        # if pre_segments.shape[0] + n2o_segments.shape[0] == 0:
-        if len(pre_segments) + len(n2o_segments) == 0:
+        # if pre_segments.shape[0] + dur_segments.shape[0] == 0:
+        if len(pre_segments) + len(dur_segments) == 0:
             print(f"Skipping {fname}: no segments found after splicing.")
             continue
 
@@ -208,11 +208,13 @@ def main():
             out_path,
             {
                 "pre_segments": list_to_cell_array(pre_segments),
-                "n2o_segments": list_to_cell_array(n2o_segments),
+                "dur_segments": list_to_cell_array(dur_segments),
                 "fs": args.fs_target,
             },
         )
-        print(f"  Saved {fname} segments to {out_path} ({len(pre_segments)} pre & {len(n2o_segments)} during)")
+        print(f"  Saved {fname} segments to {out_path} ({len(pre_segments)} pre & {len(dur_segments)} during)")
+
+    print()
 
 
 if __name__ == "__main__":
