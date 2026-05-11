@@ -13,7 +13,7 @@ from scipy.io import loadmat
 
 FILE_PATTERN = "*.mat"
 INPUT_DIR = "data_khodadad2018_200Hz_120s"
-OUTPUT_DIR = f"lzc_{INPUT_DIR[5:]}"
+OUTPUT_DIR = f"data_{INPUT_DIR[5:]}_lzc"
 
 
 def parse_args():
@@ -25,14 +25,14 @@ def parse_args():
     )
     parser.add_argument("--pattern", default=FILE_PATTERN, help="Glob pattern for epochized files")
     parser.add_argument("--input-dir", default=INPUT_DIR, help="Directory with epochized .mat files")
+    parser.add_argument("--skip-calculation", action="store_true", help="Skip LZC calculation and only print summary from existing CSV")
     return parser.parse_args()
 
 # ---------------------------
 # Main loop
 # ---------------------------
 
-def main():
-    args = parse_args()
+def process_files(args):
     print("\n")
 
     # OBTAIN FILES TO PROCESS
@@ -46,7 +46,7 @@ def main():
     if not files:
         raise FileNotFoundError(f"No files matched {os.path.join(args.input_dir, args.pattern)}")
 
-    files = files[10:20]  # TESTING
+    # files = files[10:20]  # TESTING
 
     # CALCULATE LZC FOR ALL EPOCHS IN ALL FILES
 
@@ -92,6 +92,25 @@ def main():
     df = pd.DataFrame(rows)
     df.to_csv(csv_path, index=False)
 
+    return df
+
+
+def main():
+    args = parse_args()
+    method_name = args.input_dir[5:]  # to remove "data_" prefix
+    csv_path = os.path.join(OUTPUT_DIR, f"lzc_{method_name}.csv")
+
+    # IF --skip-calculation, READ EXISTING CSV INSTEAD OF RE-COMPUTING LZC
+
+    if args.skip_calculation:
+        if not os.path.exists(csv_path):
+            raise FileNotFoundError(f"CSV file not found: {csv_path}")
+        df = pd.read_csv(csv_path)
+    else:
+        df = process_files(args)
+
+    files_count = df["file"].nunique()
+
     # CALCULATE AVERAGE VALUES PER FILE
 
     summary_df = (
@@ -105,22 +124,23 @@ def main():
     summary_csv_path = os.path.join(OUTPUT_DIR, f"lzc_{method_name}_summary.csv")
     summary_df.to_csv(summary_csv_path, index=False)
 
-    print("\n")
+    # print("\n")
     # print(summary_df)
     summary_file_df = (
         summary_df.pivot(index="file", columns="session", values=["lzc_mean", "lzc_std", "epoch_count"])
         .reset_index()
     )
+    # print(summary_file_df)
     summary_file_df.columns = [
         "file",
-        "pre_lzc_mean",
         "n2o_lzc_mean",
-        "pre_lzc_std",
+        "pre_lzc_mean",
         "n2o_lzc_std",
-        "pre_lzc_epochs",
-        "n2o_lzc_epochs",
+        "pre_lzc_std",
+        "n2o_epoch_count",
+        "pre_epoch_count",
     ]
-    print(summary_file_df)
+    # print(summary_file_df)
 
     # PRINT SUMMARY
 
@@ -130,7 +150,19 @@ def main():
     print(f"Files processed: {files_count}\n")
 
     for _, row in summary_file_df.iterrows():
-        print(f"{row['file']}\t| Pre LZC: {row['pre_lzc_mean']:.4f} ± {row['pre_lzc_std']:.4f} ({row['pre_lzc_epochs']})\t| N2O LZC: {row['n2o_lzc_mean']:.4f} ± {row['n2o_lzc_std']:.4f} ({row['n2o_lzc_epochs']})")
+        pre_is_nan = np.isnan(row["pre_lzc_mean"])
+        n2o_is_nan = np.isnan(row["n2o_lzc_mean"])
+        
+        pre_lzc = f"{row['pre_lzc_mean']:.4f} ± {row['pre_lzc_std']:.4f} ({int(row['pre_epoch_count'])})" if not pre_is_nan else "-.---- ± -.----    "
+        n2o_lzc = f"{row['n2o_lzc_mean']:.4f} ± {row['n2o_lzc_std']:.4f} ({int(row['n2o_epoch_count'])})" if not n2o_is_nan else "-.---- ± -.----    "
+
+        print(f"{row['file']}\t| Pre LZC: {pre_lzc}\t| N2O LZC: {n2o_lzc}")
+
+    files_with_pre = summary_file_df[~summary_file_df["pre_lzc_mean"].isna()]["file"].tolist()
+    files_with_n2o = summary_file_df[~summary_file_df["n2o_lzc_mean"].isna()]["file"].tolist()
+
+    print(f"\nAverage Pre LZC: {summary_file_df['pre_lzc_mean'].mean():.4f} ± {summary_file_df['pre_lzc_mean'].std():.4f} \t({len(files_with_pre)}/{files_count} files | {int(summary_file_df['pre_epoch_count'].sum())} epochs)")
+    print(f"Average N2O LZC: {summary_file_df['n2o_lzc_mean'].mean():.4f} ± {summary_file_df['n2o_lzc_mean'].std():.4f} \t({len(files_with_n2o)}/{files_count} files | {int(summary_file_df['n2o_epoch_count'].sum())} epochs)")
 
     print(f"\nSaved CSV: {csv_path}")
     print(f"Saved Summary CSV: {summary_csv_path}")
