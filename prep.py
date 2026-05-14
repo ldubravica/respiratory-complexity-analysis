@@ -17,7 +17,7 @@ VAR_NAME = "data"                       # variable name inside each .mat
 FS_ORIG = 2000                          # original sampling rate
 FS_TARGET = 200                         # target sampling rate
 
-PIPELINE_METHOD = "khodadad2018"        # "manual", "khodadad2018", or "none" for no cleaning
+PIPELINE = "khodadad2018"        # "manual", "khodadad2018", or "none" for no cleaning
 
 LOWCUT = 0.05                           # bandpass low cutoff (Hz)
 HIGHCUT = 5.0                           # bandpass high cutoff (Hz)
@@ -32,7 +32,7 @@ def parse_args():
 
     parser.add_argument("--input-dir", default=INPUT_DIR, help="Directory containing raw .mat files")
 
-    parser.add_argument("--pipeline-method", default=PIPELINE_METHOD, help="Pipeline method")
+    parser.add_argument("--pipeline", default=PIPELINE, help="Pipeline method")
     parser.add_argument("--lowcut", type=float, default=LOWCUT, help="Bandpass low cutoff (Hz)")
     parser.add_argument("--highcut", type=float, default=HIGHCUT, help="Bandpass high cutoff (Hz)")
     parser.add_argument("--filter-order", type=float, default=FILTER_ORDER, help="Filter order")
@@ -48,10 +48,10 @@ def parse_args():
 # ---------------------------
 
 
-def filter_rsp(raw, pipeline_method, lowcut, highcut, filter_order, filter_method):
-    print(f"  Filtering using '{pipeline_method}' method")
+def filter_rsp(raw, pipeline, lowcut, highcut, filter_order, filter_method):
+    print(f"  Filtering using '{pipeline}' method")
 
-    if pipeline_method == "manual":
+    if pipeline == "manual":
         raw_vector = nk.as_vector(raw)
         rsp_filtered = nk.signal_filter(raw_vector, 
                                        sampling_rate=FS_ORIG, 
@@ -59,9 +59,9 @@ def filter_rsp(raw, pipeline_method, lowcut, highcut, filter_order, filter_metho
                                        highcut=highcut, 
                                        order=filter_order, 
                                        method=filter_method)
-    elif pipeline_method in ["khodadad2018", "charlton2021", "biosppy", "hampel"]:
+    elif pipeline in ["khodadad2018", "charlton2021", "biosppy", "hampel"]:
         # khodadad2018 method - lowcut=0.05, highcut=3, order=2
-        rsp_filtered = nk.rsp_clean(raw, sampling_rate=FS_ORIG, method=pipeline_method)
+        rsp_filtered = nk.rsp_clean(raw, sampling_rate=FS_ORIG, method=pipeline)
     else:
         print(f"  No filtering applied")
         rsp_filtered = raw  # no cleaning
@@ -155,8 +155,11 @@ def main():
 
     print(f"Preprocessing .mat files in {args.input_dir}...")
 
-    out_directory = f"data_{args.pipeline_method}_{int(args.fs_target)}Hz"
+    out_directory = f"data_{args.pipeline}_{int(args.fs_target)}Hz"
     os.makedirs(out_directory, exist_ok=True)
+
+    processed_files = []
+    stds = []
 
     for fname in os.listdir(args.input_dir):
 
@@ -182,7 +185,7 @@ def main():
             continue
 
         # 1) filter + resample
-        filtered_rsp = filter_rsp(resp_data, args.pipeline_method, args.lowcut, args.highcut, args.filter_order, args.filter_method)
+        filtered_rsp = filter_rsp(resp_data, args.pipeline, args.lowcut, args.highcut, args.filter_order, args.filter_method)
         print(f"  Downsampling to '{args.fs_target}' Hz")
         resampled_rsp = nk.signal_resample(filtered_rsp, sampling_rate=FS_ORIG, desired_sampling_rate=args.fs_target)
         prep_rsp = np.asarray(resampled_rsp, dtype=float)
@@ -201,7 +204,7 @@ def main():
             continue
 
         # 3) store files
-        out_name = f"{os.path.splitext(fname)[0][:6]}-{args.pipeline_method}-{int(args.fs_target)}Hz.mat"
+        out_name = f"{os.path.splitext(fname)[0][:6]}-{args.pipeline}-{int(args.fs_target)}Hz.mat"
         out_path = os.path.join(out_directory, out_name)
 
         savemat(
@@ -210,6 +213,7 @@ def main():
                 "pre_segments": list_to_cell_array(pre_segments),
                 "dur_segments": list_to_cell_array(dur_segments),
                 "fs": args.fs_target,
+                "std": np.std(prep_rsp),
             },
         )
         print(f"  Saved {fname} segments to {out_path} ({len(pre_segments)} pre & {len(dur_segments)} during)")

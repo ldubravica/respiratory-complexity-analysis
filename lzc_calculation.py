@@ -12,9 +12,7 @@ from scipy.io import loadmat
 # ---------------------------
 
 FILE_PATTERN = "*.mat"
-INPUT_DIR = "data_khodadad2018_200Hz_120s"
-OUTPUT_DIR = f"data_{INPUT_DIR[5:]}_lzc"
-
+INPUT_DIR = "data_khodadad2018_200Hz_120s_filtered"
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -31,6 +29,7 @@ def parse_args():
     args = parser.parse_args()
     if args.csv_filename:
         args.skip_calculation = True
+    args.output_dir = f"data_{args.input_dir[5:]}_lzc"
     
     return args
 
@@ -43,12 +42,12 @@ def process_files(args):
 
     # OBTAIN FILES TO PROCESS
 
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(args.output_dir, exist_ok=True)
     method_name = args.input_dir[5:] # to remove "data_" prefix
     if args.csv_filename:
-        csv_path = os.path.join(OUTPUT_DIR, args.csv_filename)
+        csv_path = os.path.join(args.output_dir, args.csv_filename)
     else:
-        csv_path = os.path.join(OUTPUT_DIR, f"lzc_{method_name}.csv")
+        csv_path = os.path.join(args.output_dir, f"lzc_{method_name}_file_cond_epoch.csv")
 
     files = sorted(glob.glob(os.path.join(args.input_dir, args.pattern)))
     files_count = len(files)
@@ -108,9 +107,9 @@ def main():
     args = parse_args()
     method_name = args.input_dir[5:]  # to remove "data_" prefix
     if args.csv_filename:
-        csv_path = os.path.join(OUTPUT_DIR, args.csv_filename)
+        csv_path = os.path.join(args.output_dir, args.csv_filename)
     else:
-        csv_path = os.path.join(OUTPUT_DIR, f"lzc_{method_name}.csv")
+        csv_path = os.path.join(args.output_dir, f"lzc_{method_name}_file_cond_epoch.csv")
 
     # IF --skip-calculation, READ EXISTING CSV INSTEAD OF RE-COMPUTING LZC
 
@@ -125,7 +124,7 @@ def main():
 
     # CALCULATE AVERAGE VALUES PER FILE
 
-    summary_df = (
+    file_cond_df = (
         df.groupby(["file", "session"])["lzc"]
         .agg(["mean", "std", "count"])
         .reset_index()
@@ -133,20 +132,14 @@ def main():
         .sort_values(by=["file", "session"])
     )
 
-    if args.csv_filename:
-        summary_csv_path = os.path.join(OUTPUT_DIR, args.csv_filename.replace(".csv", "_summary.csv"))
-    else:
-        summary_csv_path = os.path.join(OUTPUT_DIR, f"lzc_{method_name}_summary.csv")
-    summary_df.to_csv(summary_csv_path, index=False)
+    csv_fc_path = os.path.join(args.output_dir, f"lzc_{method_name}_file_cond.csv")
+    file_cond_df.to_csv(csv_fc_path, index=False)
 
-    # print("\n")
-    # print(summary_df)
-    summary_file_df = (
-        summary_df.pivot(index="file", columns="session", values=["lzc_mean", "lzc_std", "epoch_count"])
+    file_df = (
+        file_cond_df.pivot(index="file", columns="session", values=["lzc_mean", "lzc_std", "epoch_count"])
         .reset_index()
     )
-    # print(summary_file_df)
-    summary_file_df.columns = [
+    file_df.columns = [
         "file",
         "dur_lzc_mean",
         "pre_lzc_mean",
@@ -155,7 +148,8 @@ def main():
         "dur_epoch_count",
         "pre_epoch_count",
     ]
-    # print(summary_file_df)
+    csv_f_path = os.path.join(args.output_dir, f"lzc_{method_name}_file.csv")
+    file_df.to_csv(csv_f_path, index=False)
 
     # PRINT SUMMARY
 
@@ -164,7 +158,7 @@ def main():
     print("=" * 72)
     print(f"Files processed: {files_count}\n")
 
-    for _, row in summary_file_df.iterrows():
+    for _, row in file_df.iterrows():
         pre_is_nan = np.isnan(row["pre_lzc_mean"])
         dur_is_nan = np.isnan(row["dur_lzc_mean"])
         
@@ -173,14 +167,15 @@ def main():
 
         print(f"{row['file']}\t| Pre LZC: {pre_lzc}\t| Dur LZC: {dur_lzc}")
 
-    files_with_pre = summary_file_df[~summary_file_df["pre_lzc_mean"].isna()]["file"].tolist()
-    files_with_dur = summary_file_df[~summary_file_df["dur_lzc_mean"].isna()]["file"].tolist()
+    files_with_pre = file_df[~file_df["pre_lzc_mean"].isna()]["file"].tolist()
+    files_with_dur = file_df[~file_df["dur_lzc_mean"].isna()]["file"].tolist()
 
-    print(f"\nAverage Pre LZC: {summary_file_df['pre_lzc_mean'].mean():.4f} ± {summary_file_df['pre_lzc_mean'].std():.4f} \t({len(files_with_pre)}/{files_count} files | {int(summary_file_df['pre_epoch_count'].sum())} epochs)")
-    print(f"Average Dur LZC: {summary_file_df['dur_lzc_mean'].mean():.4f} ± {summary_file_df['dur_lzc_mean'].std():.4f} \t({len(files_with_dur)}/{files_count} files | {int(summary_file_df['dur_epoch_count'].sum())} epochs)")
+    print(f"\nAverage Pre LZC: {file_df['pre_lzc_mean'].mean():.4f} ± {file_df['pre_lzc_mean'].std():.4f} \t({len(files_with_pre)}/{files_count} files | {int(file_df['pre_epoch_count'].sum())} epochs)")
+    print(f"Average Dur LZC: {file_df['dur_lzc_mean'].mean():.4f} ± {file_df['dur_lzc_mean'].std():.4f} \t({len(files_with_dur)}/{files_count} files | {int(file_df['dur_epoch_count'].sum())} epochs)")
 
-    print(f"\nSaved CSV: {csv_path}")
-    print(f"Saved Summary CSV: {summary_csv_path}")
+    print(f"\nSaved File-Condition-Epoch CSV: {csv_path}")
+    print(f"Saved File-Condition CSV: {csv_fc_path}")
+    print(f"Saved File CSV: {csv_f_path}")
     print("=" * 72)
 
 
