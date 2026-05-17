@@ -202,7 +202,7 @@ def main():
     ax.set_ylabel("Respiratory Signal")
     ax.grid(True, alpha=0.3)
 
-    overview_ax = fig.add_axes((0.12, 0.14, 0.76, 0.10), sharex=ax)
+    overview_ax = fig.add_axes((0.12, 0.14, 0.76, 0.10))
     overview_line, = overview_ax.plot(view["x"], view["segment"], linewidth=0.8, color="0.45")
     overview_ax.set_xlim(view["x_full_min"], view["x_full_max"])
     overview_ax.set_ylim(view["y_full_min"], view["y_full_max"])
@@ -273,7 +273,7 @@ def main():
         viewport_state["updating"] = True
         try:
             update_viewport(current_left, current_right)
-            overview_ax.figure.canvas.draw_idle()
+            fig.canvas.draw_idle()
         finally:
             viewport_state["updating"] = False
 

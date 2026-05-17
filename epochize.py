@@ -26,11 +26,17 @@ HIGH_STD_FRACTION_THRESH = 0.50
 def parse_args():
     parser = argparse.ArgumentParser(description=("Split filtered respiratory pre/during segments into epochs."))
     parser.add_argument("--input-dir", default=DEFAULT_INPUT_DIR, help="Directory containing preprocessed .mat files")
+    parser.add_argument("--method", default=None, help="Pipeline method")
     parser.add_argument("--epoch-length-sec", type=float, default=DEFAULT_EPOCH_LENGTH_SEC, help="Epoch length in seconds")
     parser.add_argument("--input-pattern", default=DEFAULT_INPUT_PATTERN, help="Input file names' pattern to match (e.g., 'khodadad2018-200Hz')")
     parser.add_argument("--drop-bad-epochs", action="store_true", default=DEFAULT_DROP_BAD_EPOCHS, help="Drop bad epochs")
     parser.add_argument("--save-plots", dest="save_dropped_plots", action="store_true", default=DEFAULT_SAVE_DROPPED_PLOTS, help="Save rejected-epoch plots")
     parser.add_argument("--skip-plots", dest="show_dropped_epoch_plots", action="store_false", default=DEFAULT_SHOW_DROPPED_PLOTS, help="Do not display rejected-epoch plots interactively")
+
+    args = parser.parse_args()
+    if args.method is not None:
+        args.input_dir = f"data_{args.method}"
+
     return parser.parse_args()
 
 # ---------------------------

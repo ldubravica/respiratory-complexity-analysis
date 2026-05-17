@@ -17,7 +17,7 @@ VAR_NAME = "data"                       # variable name inside each .mat
 FS_ORIG = 2000                          # original sampling rate
 FS_TARGET = 200                         # target sampling rate
 
-PIPELINE = "khodadad2018"        # "manual", "khodadad2018", or "none" for no cleaning
+METHOD = "khodadad2018"                 # "manual", "khodadad2018", or "none" for no cleaning
 
 LOWCUT = 0.05                           # bandpass low cutoff (Hz)
 HIGHCUT = 5.0                           # bandpass high cutoff (Hz)
@@ -32,11 +32,13 @@ def parse_args():
 
     parser.add_argument("--input-dir", default=INPUT_DIR, help="Directory containing raw .mat files")
 
-    parser.add_argument("--pipeline", default=PIPELINE, help="Pipeline method")
+    parser.add_argument("--method", default=METHOD, help="Pipeline method")
     parser.add_argument("--lowcut", type=float, default=LOWCUT, help="Bandpass low cutoff (Hz)")
     parser.add_argument("--highcut", type=float, default=HIGHCUT, help="Bandpass high cutoff (Hz)")
     parser.add_argument("--filter-order", type=float, default=FILTER_ORDER, help="Filter order")
     parser.add_argument("--filter-method", default=FILTER_METHOD, help="Filter method")
+
+    parser.add_argument("--fs", type=float, default=FS_ORIG, help="Original sampling rate")
 
     parser.add_argument("--fs-target", type=float, default=FS_TARGET, help="Target sampling rate")
 
@@ -48,20 +50,20 @@ def parse_args():
 # ---------------------------
 
 
-def filter_rsp(raw, pipeline, lowcut, highcut, filter_order, filter_method):
-    print(f"  Filtering using '{pipeline}' method")
+def filter_rsp(raw, method, lowcut, highcut, filter_order, filter_method, fs_orig):
+    print(f"  Filtering using '{method}' method")
 
-    if pipeline == "manual":
+    if method == "manual":
         raw_vector = nk.as_vector(raw)
         rsp_filtered = nk.signal_filter(raw_vector, 
-                                       sampling_rate=FS_ORIG, 
+                                       sampling_rate=fs_orig, 
                                        lowcut=lowcut, 
                                        highcut=highcut, 
                                        order=filter_order, 
                                        method=filter_method)
-    elif pipeline in ["khodadad2018", "charlton2021", "biosppy", "hampel"]:
+    elif method in ["khodadad2018", "charlton2021", "biosppy", "hampel"]:
         # khodadad2018 method - lowcut=0.05, highcut=3, order=2
-        rsp_filtered = nk.rsp_clean(raw, sampling_rate=FS_ORIG, method=pipeline)
+        rsp_filtered = nk.rsp_clean(raw, sampling_rate=fs_orig, method=method)
     else:
         print(f"  No filtering applied")
         rsp_filtered = raw  # no cleaning
@@ -155,7 +157,7 @@ def main():
 
     print(f"Preprocessing .mat files in {args.input_dir}...")
 
-    out_directory = f"data_{args.pipeline}_{int(args.fs_target)}Hz"
+    out_directory = f"data_{args.method}_{int(args.fs_target)}Hz"
     os.makedirs(out_directory, exist_ok=True)
 
     processed_files = []
@@ -185,7 +187,7 @@ def main():
             continue
 
         # 1) filter + resample
-        filtered_rsp = filter_rsp(resp_data, args.pipeline, args.lowcut, args.highcut, args.filter_order, args.filter_method)
+        filtered_rsp = filter_rsp(resp_data, args.method, args.lowcut, args.highcut, args.filter_order, args.filter_method, args.fs)
         print(f"  Downsampling to '{args.fs_target}' Hz")
         resampled_rsp = nk.signal_resample(filtered_rsp, sampling_rate=FS_ORIG, desired_sampling_rate=args.fs_target)
         prep_rsp = np.asarray(resampled_rsp, dtype=float)
@@ -204,7 +206,7 @@ def main():
             continue
 
         # 3) store files
-        out_name = f"{os.path.splitext(fname)[0][:6]}-{args.pipeline}-{int(args.fs_target)}Hz.mat"
+        out_name = f"{os.path.splitext(fname)[0][:6]}-{args.method}-{int(args.fs_target)}Hz.mat"
         out_path = os.path.join(out_directory, out_name)
 
         savemat(

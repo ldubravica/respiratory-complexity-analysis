@@ -12,7 +12,7 @@ from scipy.io import loadmat
 # ---------------------------
 
 FILE_PATTERN = "*.mat"
-INPUT_DIR = "data_khodadad2018_200Hz_120s_filtered"
+INPUT_DIR = "data_khodadad2018_200Hz_120s_all"
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -23,12 +23,15 @@ def parse_args():
     )
     parser.add_argument("--pattern", default=FILE_PATTERN, help="Glob pattern for epochized files")
     parser.add_argument("--input-dir", default=INPUT_DIR, help="Directory with epochized .mat files")
+    parser.add_argument("--method", default=None, help="Pipeline method")
     parser.add_argument("--skip-calculation", action="store_true", help="Skip LZC calculation and only print summary from existing CSV")
     parser.add_argument("--csv-filename", default=None, help="Optional custom filename for output CSV (default: lzc_<input_dir>.csv)")
     
     args = parser.parse_args()
     if args.csv_filename:
         args.skip_calculation = True
+    if args.method is not None:
+        args.input_dir = f"data_{args.method}"
     args.output_dir = f"data_{args.input_dir[5:]}_lzc"
     
     return args
