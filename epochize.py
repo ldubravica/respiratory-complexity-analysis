@@ -32,12 +32,13 @@ def parse_args():
     parser.add_argument("--drop-bad-epochs", action="store_true", default=DEFAULT_DROP_BAD_EPOCHS, help="Drop bad epochs")
     parser.add_argument("--save-plots", dest="save_dropped_plots", action="store_true", default=DEFAULT_SAVE_DROPPED_PLOTS, help="Save rejected-epoch plots")
     parser.add_argument("--skip-plots", dest="show_dropped_epoch_plots", action="store_false", default=DEFAULT_SHOW_DROPPED_PLOTS, help="Do not display rejected-epoch plots interactively")
+    parser.add_argument("--standardize", action="store_true", help="Standardize each epoch before saving")
 
     args = parser.parse_args()
     if args.method is not None:
         args.input_dir = f"data_{args.method}"
 
-    return parser.parse_args()
+    return args
 
 # ---------------------------
 # Tools
@@ -51,6 +52,17 @@ def cell_array_to_list(cell_array):
         segment = np.asarray(cell, dtype=float).reshape(-1)
         segments.append(segment)
     return segments
+
+
+def standardize_epoch(epoch):
+    epoch = np.asarray(epoch, dtype=float).reshape(-1)
+    epoch_mean = float(np.mean(epoch))
+    epoch_std = float(np.std(epoch))
+
+    if epoch_std == 0.0:
+        return epoch - epoch_mean
+
+    return (epoch - epoch_mean) / epoch_std
 
 
 def drop_bad_epochs(epochs, file_std, fs, fname, args):
@@ -243,7 +255,7 @@ def main():
     preprocessing_info = args.input_dir[5:]  # to remove "data_" prefix
     epochizing_info = f"{int(round(args.epoch_length_sec))}s"
     epoch_category = "_filtered" if args.drop_bad_epochs else "_all"
-    out_directory = f"data_{preprocessing_info}_{epochizing_info}{epoch_category}"
+    out_directory = f"data_{preprocessing_info}_{epochizing_info}{epoch_category}{'_std' if args.standardize else ''}"
     os.makedirs(out_directory, exist_ok=True)
     
     args.epochizing_info = epochizing_info
@@ -299,6 +311,11 @@ def main():
             if pre_epochs.shape[0] == 0 and dur_epochs.shape[0] == 0:
                 print("  Skipping: all epochs were rejected by QC.")
                 continue
+
+        # optional epoch-level standardization
+        if args.standardize:
+            pre_epochs = np.asarray([standardize_epoch(epoch) for epoch in pre_epochs], dtype=float)
+            dur_epochs = np.asarray([standardize_epoch(epoch) for epoch in dur_epochs], dtype=float)
 
         # 5) store epochized data
         out_name = f"{os.path.splitext(fname)[0]}-{epochizing_info}.mat"

@@ -51,6 +51,9 @@ This example assumes the raw MATLAB files are provided in the folder data_raw.
 - `--epoch-length-sec`: The target length of each epoch in seconds _(default: `120.0`)_.
 - `--drop-bad-epochs`: If set, drops bad epochs during epochization _(WIP: not fully implemented)_.
 - `--save-plots`: If set, saves rejected-epoch plots during epochization _(default: `False`)_.
+- `--standardize-file`: Standardizes the downsampled signal before segmentation in `prep.py`.
+- `--standardize-segment`: Standardizes each segment after segmentation in `prep.py`.
+- `--standardize-epoch`: Standardizes each epoch before saving in `epochize.py`.
 
 ## Pipeline Components
 
@@ -63,6 +66,7 @@ DOWNSAMPLING: By default, the signal is resampled from 2000Hz to 200Hz.
 SEGMENTATION: The signal for each participant is then split into continuous segments before inhalation and during inhalation, based on the timestamps provided for each participant's data.
 
 OUTPUT: Filtered, downsample, and segmented .mat files are stored in `data_{pipeline_method}_{fs_target}Hz` folder.
+If `--standardize-file` or `--standardize-segment` are used, the output folder gets a `_std_file` or `_std_seg` suffix respectively.
 
 #### Usage
 
@@ -82,6 +86,8 @@ This example assumes the raw MATLAB files are provided in the folder data_raw.
 - `--filter-method`: Filtering method _(default: `butterworth`, used if method set to `manual`)_.
 - `--fs`: Original sampling frequency in Hz _(default: `2000.0`)_.
 - `--fs-target`: Target sampling frequency in Hz _(default: `200.0`)_.
+- `--standardize-file`: Standardize the resampled signal before segmentation.
+- `--standardize-segment`: Standardize each segment after segmentation.
 
 
 ### 2. Splitting into epochs (`epochize.py`)
@@ -104,6 +110,7 @@ This example assumes the preprocessed MATLAB files are provided in the folder `d
 - `--drop-bad-epochs`: If set, drops epochs that fail QC rules.
 - `--save-plots`: If set, saves plots of rejected epochs.
 - `--skip-plots`: If set, does not display rejected-epoch plots interactively.
+- `--standardize`: If set, standardizes each epoch before saving.
 
 ### 3. Calculating LZC (`lzc_calculation.py`)
 

@@ -5,11 +5,9 @@ import neurokit2 as nk
 import numpy as np
 from scipy.io import loadmat, savemat
 
-
 # ---------------------------
 # Configuration
 # ---------------------------
-
 
 INPUT_DIR = "data_raw"                  # raw .mat files; line noise removed; 0.05-5 Hz bandpass
 VAR_NAME = "data"                       # variable name inside each .mat
@@ -37,18 +35,16 @@ def parse_args():
     parser.add_argument("--highcut", type=float, default=HIGHCUT, help="Bandpass high cutoff (Hz)")
     parser.add_argument("--filter-order", type=float, default=FILTER_ORDER, help="Filter order")
     parser.add_argument("--filter-method", default=FILTER_METHOD, help="Filter method")
-
     parser.add_argument("--fs", type=float, default=FS_ORIG, help="Original sampling rate")
-
     parser.add_argument("--fs-target", type=float, default=FS_TARGET, help="Target sampling rate")
+    parser.add_argument("--standardize-file", action="store_true", help="Z-score the signal after downsampling before segmentation")
+    parser.add_argument("--standardize-segment", action="store_true", help="Z-score each segment after segmentation (overrides --standardize-file)")
 
     return parser.parse_args()
-
 
 # ---------------------------
 # Phases & Tools
 # ---------------------------
-
 
 def filter_rsp(raw, method, lowcut, highcut, filter_order, filter_method, fs_orig):
     print(f"  Filtering using '{method}' method")
@@ -69,6 +65,17 @@ def filter_rsp(raw, method, lowcut, highcut, filter_order, filter_method, fs_ori
         rsp_filtered = raw  # no cleaning
 
     return rsp_filtered
+
+
+def standardize_signal(signal):
+    signal = np.asarray(signal, dtype=float)
+    signal_mean = float(np.mean(signal))
+    signal_std = float(np.std(signal))
+
+    if signal_std == 0.0:
+        return signal - signal_mean
+
+    return (signal - signal_mean) / signal_std
 
 
 def segment_via_timestamps(data, fs, txt_path):
@@ -146,22 +153,18 @@ def list_to_cell_array(segments):
         cell_array[i, 0] = np.asarray(seg, dtype=float)
     return cell_array
 
-
 # ---------------------------
 # Main loop
 # ---------------------------
-
 
 def main():
     args = parse_args()
 
     print(f"Preprocessing .mat files in {args.input_dir}...")
 
-    out_directory = f"data_{args.method}_{int(args.fs_target)}Hz"
+    std_ext = "_std_file" if args.standardize_file else ("_std_seg" if args.standardize_segment else "")
+    out_directory = f"data_{args.method}_{int(args.fs_target)}Hz{std_ext}"
     os.makedirs(out_directory, exist_ok=True)
-
-    processed_files = []
-    stds = []
 
     for fname in os.listdir(args.input_dir):
 
@@ -191,6 +194,11 @@ def main():
         print(f"  Downsampling to '{args.fs_target}' Hz")
         resampled_rsp = nk.signal_resample(filtered_rsp, sampling_rate=FS_ORIG, desired_sampling_rate=args.fs_target)
         prep_rsp = np.asarray(resampled_rsp, dtype=float)
+
+        # optional file-level standardization
+        if args.standardize_file and not args.standardize_segment:
+            prep_rsp = standardize_signal(prep_rsp)
+            print("  Standardized the downsampled signal")
         
         # 2) splice into continuous segments using TXT timestamps
         txt_path = os.path.join(args.input_dir, os.path.splitext(fname)[0] + "-evt.txt")
@@ -199,7 +207,14 @@ def main():
         else:
             print(f"Skipping {fname}: TXT file not found.")
             continue
-        
+
+        # optional segment-level standardization
+        if args.standardize_segment:
+            for i, seg in enumerate(pre_segments):
+                pre_segments[i] = standardize_signal(seg)
+            for i, seg in enumerate(dur_segments):
+                dur_segments[i] = standardize_signal(seg)
+
         # if pre_segments.shape[0] + dur_segments.shape[0] == 0:
         if len(pre_segments) + len(dur_segments) == 0:
             print(f"Skipping {fname}: no segments found after splicing.")

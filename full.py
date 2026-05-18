@@ -34,6 +34,9 @@ def parse_args():
     parser.add_argument("--epoch-length-sec", type=float, default=DEFAULT_EPOCH_LENGTH_SEC, help="Epoch length in seconds")
     parser.add_argument("--drop-bad-epochs", action="store_true", default=DEFAULT_DROP_BAD_EPOCHS, help="Drop bad epochs during epochization")
     parser.add_argument("--save-plots", action="store_true", default=DEFAULT_SAVE_PLOTS, help="Save rejected-epoch plots during epochization")
+    parser.add_argument("--standardize-file", action="store_true", help="Standardize the downsampled signal before segmentation in prep.py")
+    parser.add_argument("--standardize-segment", action="store_true", help="Standardize each segment after segmentation in prep.py")
+    parser.add_argument("--standardize-epoch", action="store_true", help="Standardize each epoch before saving in epochize.py")
     return parser.parse_args()
 
 
@@ -46,6 +49,14 @@ def run_step(script_name, args):
 
 def int_label(value):
     return str(int(round(float(value))))
+
+
+def prep_std_suffix(args):
+    if args.standardize_segment:
+        return "_std_seg"
+    if args.standardize_file:
+        return "_std_file"
+    return ""
 
 
 def main():
@@ -73,9 +84,13 @@ def main():
         "--fs-target",
         str(args.fs_target),
     ]
+    if args.standardize_file:
+        prep_args.append("--standardize-file")
+    if args.standardize_segment:
+        prep_args.append("--standardize-segment")
     run_step("prep.py", prep_args)
 
-    prep_output_dir = f"data_{args.method}_{fs_target_label}Hz"
+    prep_output_dir = f"data_{args.method}_{fs_target_label}Hz{prep_std_suffix(args)}"
     epochize_args = [
         "--input-dir",
         prep_output_dir,
@@ -86,9 +101,13 @@ def main():
         epochize_args.append("--drop-bad-epochs")
     if args.save_plots:
         epochize_args.append("--save-plots")
+    if args.standardize_epoch:
+        epochize_args.append("--standardize")
     run_step("epochize.py", epochize_args)
 
-    epochized_method = f"{args.method}_{fs_target_label}Hz_{epoch_length_label}s_{epoch_suffix}"
+    epochized_method = f"{prep_output_dir[5:]}_{epoch_length_label}s_{epoch_suffix}"
+    if args.standardize_epoch:
+        epochized_method = f"{epochized_method}_std"
     epochized_dir = f"data_{epochized_method}"
 
     lzc_calculation_args = [
